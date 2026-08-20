@@ -34,3 +34,7 @@
 - [x] Add a rendered client-flow test that simulates the active workspace clarification event and successful answer submission without page reload.
 - [x] Recover from an empty public-source response by marking the step skipped, streaming the reason, and continuing the remaining research plan instead of failing the entire session.
 - [x] Recover from unavailable per-step model analysis by preserving sources, producing an attributable source-based fallback finding, and completing the remaining plan with a clear activity message.
+- [x] Add a visible research-depth dropdown to the query intake with clear Quick Summary, Standard, and Deep Dive descriptions.
+- [x] Persist the selected depth per research session and return it in session history and detail contracts.
+- [x] Adapt plan breadth and execution work to the selected depth, with regression coverage for quick and deep modes.
+- [x] Validate the depth selector in the rendered intake flow and save the completed update checkpoint.

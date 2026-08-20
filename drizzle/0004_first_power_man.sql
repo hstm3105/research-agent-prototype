@@ -1,0 +1,1 @@
+ALTER TABLE `researchSessions` ADD `researchDepth` enum('quick','standard','deep') DEFAULT 'standard' NOT NULL;

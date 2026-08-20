@@ -26,6 +26,7 @@ export const researchSessions = mysqlTable("researchSessions", {
   query: text("query").notNull(),
   researchGoal: text("researchGoal"),
   intent: text("intent"),
+  researchDepth: mysqlEnum("researchDepth", ["quick", "standard", "deep"]).default("standard").notNull(),
   outputFormat: mysqlEnum("outputFormat", ["report", "summary", "comparison", "timeline", "qa"]).default("report").notNull(),
   status: mysqlEnum("status", ["draft", "awaiting_clarification", "planning", "researching", "complete", "failed"]).default("draft").notNull(),
   clarifyingQuestion: text("clarifyingQuestion"),

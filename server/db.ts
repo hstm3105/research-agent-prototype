@@ -75,6 +75,7 @@ export async function createResearchSession(input: {
   userId: number;
   query: string;
   title: string;
+  researchDepth: "quick" | "standard" | "deep";
 }) {
   const db = await requireDb();
   await db.insert(researchSessions).values({ ...input, status: "draft" });

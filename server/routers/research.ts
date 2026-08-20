@@ -14,14 +14,14 @@ import {
 import { protectedProcedure, router } from "../_core/trpc";
 import { generateResearchExport } from "../research/export";
 
-const querySchema = z.object({ query: z.string().trim().min(8).max(8_000) });
+const querySchema = z.object({ query: z.string().trim().min(8).max(8_000), researchDepth: z.enum(["quick", "standard", "deep"]).default("standard") });
 const sessionSchema = z.object({ sessionId: z.string().min(6).max(64) });
 
 export const researchRouter = router({
   list: protectedProcedure.query(({ ctx }) => listResearchSessionsForUser(ctx.user.id)),
   create: protectedProcedure.input(querySchema).mutation(({ ctx, input }) => {
     const title = input.query.replace(/\s+/g, " ").slice(0, 96);
-    return createResearchSession({ id: nanoid(), userId: ctx.user.id, query: input.query, title });
+    return createResearchSession({ id: nanoid(), userId: ctx.user.id, query: input.query, title, researchDepth: input.researchDepth });
   }),
   get: protectedProcedure.input(sessionSchema).query(async ({ ctx, input }) => {
     const session = await getResearchSessionForUser(input.sessionId, ctx.user.id);

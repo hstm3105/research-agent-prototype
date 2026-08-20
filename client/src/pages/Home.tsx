@@ -1,5 +1,6 @@
 import DashboardLayout, { type ResearchSessionNavItem } from "@/components/DashboardLayout";
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
@@ -38,6 +39,12 @@ const exampleQueries = [
   "What is the evidence for and against a four-day workweek?",
   "Build a timeline of the key developments in solid-state battery research.",
 ];
+
+const depthOptions = {
+  quick: { label: "Quick summary", detail: "2 focused source checks" },
+  standard: { label: "Standard", detail: "3 balanced research steps" },
+  deep: { label: "Deep dive", detail: "5 thorough evidence steps" },
+} as const;
 
 function statusLabel(status: string | undefined) {
   return (status || "draft").replace(/_/g, " ");
@@ -88,6 +95,7 @@ export default function Home() {
   const clarifyResearch = trpc.research.clarify.useMutation();
   const createExport = trpc.research.export.useMutation();
   const [query, setQuery] = useState("");
+  const [researchDepth, setResearchDepth] = useState<keyof typeof depthOptions>("standard");
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
   const [activeStepId, setActiveStepId] = useState<string | null>(null);
   const [livePlan, setLivePlan] = useState<LivePlanStep[]>([]);
@@ -211,7 +219,7 @@ export default function Home() {
       return;
     }
     try {
-      const created = await createResearch.mutateAsync({ query: query.trim() });
+      const created = await createResearch.mutateAsync({ query: query.trim(), researchDepth });
       if (!created) throw new Error("Unable to create the research session");
       setQuery("");
       await utils.research.list.invalidate();
@@ -268,7 +276,7 @@ export default function Home() {
                 <p className="mt-6 max-w-xl text-base leading-7 text-secondary-foreground">ResearchOS interprets your brief, makes the work visible, retrieves live public evidence, and turns the result into the format the question needs.</p>
                 <div className="mt-10 rounded-[1.4rem] border border-border bg-card p-3 shadow-[0_24px_80px_-50px_oklch(0.25_0.014_250/0.45)]">
                   <Textarea ref={composerRef} value={query} onChange={event => setQuery(event.target.value)} placeholder="What do you need to understand, decide, compare, or explain?" className="min-h-36 resize-none border-0 bg-transparent px-3 pt-3 text-base leading-7 shadow-none focus-visible:ring-0" />
-                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/70 px-3 pt-3"><div className="flex items-center gap-2 font-mono-ui text-[10px] uppercase tracking-[0.12em] text-muted-foreground"><Search className="h-3.5 w-3.5 text-primary" /> Intent-aware · Cited evidence</div><Button onClick={startResearch} disabled={isWorking} className="h-10 rounded-xl px-4 shadow-[0_8px_20px_-12px_oklch(0.35_0.075_182)]">{isWorking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Start research</Button></div>
+                  <div className="flex flex-wrap items-center justify-between gap-3 border-t border-border/70 px-3 pt-3"><div className="flex flex-wrap items-center gap-3"><div className="flex items-center gap-2 font-mono-ui text-[10px] uppercase tracking-[0.12em] text-muted-foreground"><Search className="h-3.5 w-3.5 text-primary" /> Intent-aware · Cited evidence</div><Select value={researchDepth} onValueChange={value => setResearchDepth(value as keyof typeof depthOptions)}><SelectTrigger aria-label="Research depth" className="h-9 w-[196px] rounded-lg border-border bg-muted/45 text-left text-xs"><SelectValue /></SelectTrigger><SelectContent>{Object.entries(depthOptions).map(([value, option]) => <SelectItem key={value} value={value} className="text-xs"><span className="font-medium">{option.label}</span><span className="ml-2 text-muted-foreground">· {option.detail}</span></SelectItem>)}</SelectContent></Select></div><Button onClick={startResearch} disabled={isWorking} className="h-10 rounded-xl px-4 shadow-[0_8px_20px_-12px_oklch(0.35_0.075_182)]">{isWorking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />} Start research</Button></div>
                 </div>
                 <div className="mt-4 flex flex-wrap items-center gap-2">{exampleQueries.map(prompt => <button key={prompt} onClick={() => setQuery(prompt)} className="rounded-full border border-border bg-card px-3 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:border-primary/40 hover:text-primary">{prompt}</button>)}<span className="ml-1 font-mono-ui text-[10px] uppercase tracking-[0.1em] text-muted-foreground">Focus anytime <kbd className="rounded border border-border bg-card px-1 py-0.5 text-[9px]">⌘ K</kbd></span></div>
               </div>

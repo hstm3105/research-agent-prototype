@@ -94,14 +94,14 @@ const adaptationSchema = {
   additionalProperties: false,
 };
 
-export async function interpretResearchQuery(query: string): Promise<ResearchIntent> {
+export async function interpretResearchQuery(query: string, researchDepth: "quick" | "standard" | "deep" = "standard"): Promise<ResearchIntent> {
   const model = await chooseResearchModel();
   const response = await invokeLLM({
     model,
     messages: [
       {
         role: "system",
-        content: "You are a senior research lead. Default to action: make reasonable assumptions and proceed rather than asking for preferences. Ask one concise clarifying question only when the request is genuinely under-specified and the missing answer would materially change the research outcome, scope, jurisdiction, safety constraints, or deliverable. Never block routine recommendations, including restaurants, travel, products, or local services, for preferences such as cuisine variants, dietary preference, budget, neighborhood, atmosphere, or fine-versus-casual; research broadly and surface those trade-offs instead. When the user gives no preference, do not invent a restrictive default such as vegetarian-only, luxury-only, budget-only, or a single neighborhood; produce a balanced broad shortlist and label relevant options. Otherwise set requiresClarification to false and clarifyingQuestion to an empty string. Select the output format that best serves the task. Draft 3 to 5 sequential web-research steps, with specific non-overlapping search queries. Do not claim facts or cite sources in this planning stage.",
+        content: `You are a senior research lead. Default to action: make reasonable assumptions and proceed rather than asking for preferences. Ask one concise clarifying question only when the request is genuinely under-specified and the missing answer would materially change the research outcome, scope, jurisdiction, safety constraints, or deliverable. Never block routine recommendations, including restaurants, travel, products, or local services, for preferences such as cuisine variants, dietary preference, budget, neighborhood, atmosphere, or fine-versus-casual; research broadly and surface those trade-offs instead. When the user gives no preference, do not invent a restrictive default such as vegetarian-only, luxury-only, budget-only, or a single neighborhood; produce a balanced broad shortlist and label relevant options. Otherwise set requiresClarification to false and clarifyingQuestion to an empty string. Select the output format that best serves the task. The user selected ${researchDepth} research depth: ${researchDepth === "quick" ? "draft exactly 2 focused, high-yield research steps" : researchDepth === "deep" ? "draft exactly 5 thorough, non-overlapping research steps" : "draft exactly 3 balanced, non-overlapping research steps"}. Do not claim facts or cite sources in this planning stage.`,
       },
       { role: "user", content: query },
     ],
@@ -122,8 +122,9 @@ export function shouldRequestClarification(query: string, intent: Pick<ResearchI
   return materiallyConstrained || normalizedQuery.trim().split(/\s+/).length < 4;
 }
 
-function makePlanSteps(intent: ResearchIntent): ResearchPlanStep[] {
-  return intent.plan.slice(0, 5).map((step, ordinal) => ({ ...step, id: nanoid(), ordinal }));
+export function makePlanSteps(intent: ResearchIntent, researchDepth: "quick" | "standard" | "deep"): ResearchPlanStep[] {
+  const planLength = researchDepth === "quick" ? 2 : researchDepth === "deep" ? 5 : 3;
+  return intent.plan.slice(0, planLength).map((step, ordinal) => ({ ...step, id: nanoid(), ordinal }));
 }
 
 function readStoredPlan(value: string | null): ResearchPlanStep[] | null {
@@ -252,7 +253,7 @@ export async function runResearchSession(input: {
     } else {
       await updateResearchSessionForUser(session.id, input.userId, { status: "planning", errorMessage: null });
       emit(input.emit, { type: "activity", sessionId: session.id, phase: "planning", message: "Interpreting the research objective and choosing the right evidence format.", progress: 8 });
-      intent = await interpretResearchQuery(session.query);
+      intent = await interpretResearchQuery(session.query, session.researchDepth);
       emit(input.emit, { type: "activity", sessionId: session.id, phase: "planning", message: "Research objective understood. Preparing the work plan.", progress: 18 });
       emit(input.emit, { type: "intent", sessionId: session.id, intent });
 
@@ -269,7 +270,7 @@ export async function runResearchSession(input: {
       return;
       }
 
-      plan = makePlanSteps(intent);
+      plan = makePlanSteps(intent, session.researchDepth);
       await replaceResearchSteps(session.id, plan.map(step => ({
       id: step.id,
       sessionId: session.id,

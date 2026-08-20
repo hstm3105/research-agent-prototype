@@ -20,7 +20,7 @@ vi.mock("../db", () => mocks.db);
 vi.mock("../_core/llm", () => mocks.llm);
 vi.mock("./search", async importOriginal => ({ ...(await importOriginal<typeof import("./search")>()), ...mocks.search }));
 
-import { applyPlanAdaptation, runResearchSession, shouldRequestClarification } from "./agent";
+import { applyPlanAdaptation, makePlanSteps, runResearchSession, shouldRequestClarification } from "./agent";
 import { normalizeSearchPayload } from "./search";
 
 describe("normalizeSearchPayload", () => {
@@ -113,6 +113,24 @@ describe("clarification policy", () => {
       "Legal requirements?",
       { requiresClarification: true, clarifyingQuestion: "Which jurisdiction applies?" }
     )).toBe(true);
+  });
+});
+
+describe("research depth plan sizing", () => {
+  const intent = {
+    title: "Depth test",
+    intent: "Test plan sizing.",
+    researchGoal: "Test each depth.",
+    requiresClarification: false,
+    clarifyingQuestion: "",
+    outputFormat: "summary" as const,
+    plan: Array.from({ length: 5 }, (_, index) => ({ title: `Step ${index + 1}`, description: "Research this lens.", searchQuery: `query ${index + 1}` })),
+  };
+
+  it("uses two focused steps for a quick summary and five for a deep dive", () => {
+    expect(makePlanSteps(intent, "quick")).toHaveLength(2);
+    expect(makePlanSteps(intent, "standard")).toHaveLength(3);
+    expect(makePlanSteps(intent, "deep")).toHaveLength(5);
   });
 });
 
