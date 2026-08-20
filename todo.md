@@ -1,0 +1,24 @@
+# Project TODO
+
+- [x] Add relational schema for research sessions, plan steps, cited findings, normalized finding-to-source references, and persisted export files, with user ownership and foreign-key relationships.
+- [x] Apply the research-agent migrations and explicitly verify all expected tables are present.
+- [x] Build server-side intent parsing that classifies the query, detects material ambiguity, defines the research objective, and selects a suitable output format.
+- [x] Build structured adaptive plan generation that returns ordered, visible research steps and updates the plan after source discovery when needed.
+- [x] Add evidence-driven adaptive re-planning that can revise or append plan steps after live source discovery and streams the revised plan to the workspace.
+- [x] Extend adaptive re-planning to revise existing pending steps based on evidence, persist the revised plan, and test the revised-plan stream contract.
+- [x] Add orchestration-level coverage that verifies a revised plan is persisted and emitted after evidence-driven adaptation.
+- [x] Integrate live public web retrieval through the Manus Data API and normalize source title, URL, publisher, excerpt, and retrieval date.
+- [x] Surface the verified Data API provider-coverage limitation in the research UI if general web search is not available in the project environment.
+- [x] Build sequential research execution that combines public-source evidence with labeled LLM analysis while enforcing source attribution for each finding.
+- [x] Implement a server-sent event stream that publishes plan, active-step, source, finding, completion, and failure events during a research run.
+- [x] Persist research sessions, plan progress, findings, citations, final report, and output format per authenticated user.
+- [x] Implement Markdown and self-contained PDF-style HTML export generation, store each export in S3, and associate download links with the completed session.
+- [x] Build a responsive dashboard shell with session history, New Research action, settings entry, authentication states, and a mobile-ready collapsible navigation treatment.
+- [x] Build a query intake workflow with focus controls, ambiguity confirmation, real-time plan visualization, live execution indicators, and intermediate findings.
+- [x] Add explicit focus controls for the research composer, including keyboard access and focus management for new and clarification states.
+- [x] Build polished research results with inline per-finding citation chips, a side-by-side reference panel, context-aware report/table/timeline/Q&A rendering, and export controls.
+- [x] Add loading, empty, recovery, and error states across research execution and history navigation.
+- [x] Add explicit session-history and session-detail loading/error feedback for research query failures and transitions.
+- [x] Add Vitest coverage for planning, source normalization, citation validation, export rendering, and user-scoped persistence.
+- [x] Verify the completed interface in desktop and mobile views, resolve console/runtime errors, and save the final project checkpoint.
+- [x] Confirm post-restart runtime logs are clean and save the validated final project checkpoint.

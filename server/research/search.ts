@@ -1,0 +1,84 @@
+import { callDataApi } from "../_core/dataApi";
+import type { NormalizedSearchSource } from "./types";
+
+type RecordValue = Record<string, unknown>;
+
+function isRecord(value: unknown): value is RecordValue {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function textOf(value: unknown): string | null {
+  return typeof value === "string" && value.trim() ? value.trim() : null;
+}
+
+function asUrl(value: unknown): string | null {
+  const candidate = textOf(value);
+  if (!candidate) return null;
+  try {
+    const parsed = new URL(candidate);
+    return parsed.protocol === "http:" || parsed.protocol === "https:" ? parsed.toString() : null;
+  } catch {
+    return null;
+  }
+}
+
+function findResultArrays(value: unknown, depth = 0): RecordValue[][] {
+  if (depth > 4 || !isRecord(value)) return [];
+  const arrays: RecordValue[][] = [];
+  for (const [key, child] of Object.entries(value)) {
+    if (!Array.isArray(child)) {
+      arrays.push(...findResultArrays(child, depth + 1));
+      continue;
+    }
+    const records = child.filter(isRecord);
+    if (records.length && /result|item|organic|web|article|news|value/i.test(key)) arrays.push(records);
+  }
+  return arrays;
+}
+
+export function normalizeSearchPayload(payload: unknown): NormalizedSearchSource[] {
+  const retrievedAt = new Date();
+  const contentItems = isRecord(payload) && Array.isArray(payload.contents) ? payload.contents.filter(isRecord) : [];
+  const videoSources = contentItems.flatMap(item => {
+    const video = isRecord(item.video) ? item.video : null;
+    if (!video) return [];
+    const videoId = textOf(video.videoId);
+    if (!videoId) return [];
+    const author = isRecord(video.author) ? video.author : null;
+    return [{
+      title: textOf(video.title) ?? "Untitled video source",
+      url: `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`,
+      publisher: textOf(author?.title) ?? "YouTube",
+      excerpt: textOf(video.descriptionSnippet),
+      retrievedAt,
+    }];
+  });
+  if (videoSources.length) return videoSources.slice(0, 8);
+
+  const arrays = findResultArrays(payload);
+  const seen = new Set<string>();
+  const sources: NormalizedSearchSource[] = [];
+  for (const record of arrays.flat()) {
+    const url = asUrl(record.url ?? record.link ?? record.href ?? record.website ?? record.sourceUrl);
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    const publisher = textOf(record.publisher ?? record.source ?? record.siteName ?? record.domain) ?? (() => {
+      try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return null; }
+    })();
+    sources.push({
+      title: textOf(record.title ?? record.name ?? record.headline) ?? publisher ?? "Untitled source",
+      url,
+      publisher,
+      excerpt: textOf(record.snippet ?? record.description ?? record.content ?? record.text ?? record.highlight),
+      retrievedAt,
+    });
+  }
+  return sources.slice(0, 8);
+}
+
+export async function searchPublicWeb(query: string): Promise<NormalizedSearchSource[]> {
+  const payload = await callDataApi("Youtube/search", { query: { q: query } });
+  const sources = normalizeSearchPayload(payload);
+  if (sources.length) return sources;
+  throw new Error("The live public-search provider returned no attributable sources for this step");
+}
