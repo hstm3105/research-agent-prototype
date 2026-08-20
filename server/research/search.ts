@@ -78,7 +78,5 @@ export function normalizeSearchPayload(payload: unknown): NormalizedSearchSource
 
 export async function searchPublicWeb(query: string): Promise<NormalizedSearchSource[]> {
   const payload = await callDataApi("Youtube/search", { query: { q: query } });
-  const sources = normalizeSearchPayload(payload);
-  if (sources.length) return sources;
-  throw new Error("The live public-search provider returned no attributable sources for this step");
+  return normalizeSearchPayload(payload);
 }

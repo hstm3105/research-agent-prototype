@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
+import { appendResearchActivity, applyClarificationTransition, beginClarificationResume, type ResearchActivity } from "@/lib/researchStreamState";
 import { toast } from "sonner";
 import { Streamdown } from "streamdown";
 import {
@@ -24,11 +25,13 @@ import {
   TableProperties,
   Timer,
 } from "lucide-react";
-import { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type LivePlanStep = { id: string; ordinal: number; title: string; description: string; searchQuery: string; status?: string };
 type LiveSource = { id: string; stepId?: string | null; title: string; url: string; publisher: string | null; excerpt: string | null; retrievedAt: Date | string };
 type LiveFinding = { id: string; stepId?: string | null; ordinal?: number; title: string; claim: string; evidence: string; citationSourceIds: string[] };
+type LiveClarification = { question: string };
+type LiveIntentPreview = { title: string; researchGoal: string; outputFormat: string };
 
 const exampleQueries = [
   "Compare the best approaches to decarbonizing heavy industry in the next decade.",
@@ -90,6 +93,9 @@ export default function Home() {
   const [livePlan, setLivePlan] = useState<LivePlanStep[]>([]);
   const [liveSources, setLiveSources] = useState<LiveSource[]>([]);
   const [liveFindings, setLiveFindings] = useState<LiveFinding[]>([]);
+  const [liveClarification, setLiveClarification] = useState<LiveClarification | null>(null);
+  const [liveIntent, setLiveIntent] = useState<LiveIntentPreview | null>(null);
+  const [activityLog, setActivityLog] = useState<ResearchActivity[]>([]);
   const [streamMessage, setStreamMessage] = useState<string | null>(null);
   const streamRef = useRef<EventSource | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
@@ -138,7 +144,14 @@ export default function Home() {
     setLiveSources([]);
     setLiveFindings([]);
     setActiveStepId(null);
+    setLiveClarification(null);
+    setLiveIntent(null);
+    setActivityLog([]);
     setStreamMessage(null);
+  }
+
+  function recordActivity(activity: Omit<ResearchActivity, "timestamp">) {
+    setActivityLog(current => appendResearchActivity(current, activity));
   }
 
   function openStream(sessionId: string) {
@@ -149,10 +162,16 @@ export default function Home() {
     streamRef.current = stream;
     const onEvent = (event: MessageEvent) => {
       const data = JSON.parse(event.data);
-      if (data.type === "intent") setStreamMessage(`Interpreting objective · ${data.intent.researchGoal}`);
+      if (data.type === "connected") recordActivity({ phase: "planning", message: "Connected to the research workspace. Preparing the agent run.", progress: 3 });
+      if (data.type === "activity") { recordActivity(data); setStreamMessage(data.message); }
+      if (data.type === "intent") { setLiveIntent(data.intent); setStreamMessage(`Interpreting objective · ${data.intent.researchGoal}`); }
       if (data.type === "clarification") {
-        setStreamMessage("The agent needs one decision before continuing.");
-        stream.close();
+        const transition = applyClarificationTransition({ clarification: liveClarification, message: streamMessage, activities: activityLog }, data.question);
+        setLiveClarification(transition.clarification);
+        setStreamMessage(transition.message);
+        setActivityLog(transition.activities);
+        if (transition.shouldInvalidateSession) { void utils.research.get.invalidate({ sessionId }); void utils.research.list.invalidate(); }
+        if (transition.shouldCloseStream) stream.close();
       }
       if (data.type === "plan") {
         setLivePlan(data.plan);
@@ -178,7 +197,7 @@ export default function Home() {
         void utils.research.list.invalidate();
       }
     };
-    ["intent", "clarification", "plan", "step", "sources", "findings", "complete", "error"].forEach(name => stream.addEventListener(name, onEvent));
+    ["connected", "activity", "intent", "clarification", "plan", "step", "sources", "findings", "complete", "error"].forEach(name => stream.addEventListener(name, onEvent));
     stream.onerror = () => {
       if (stream.readyState === EventSource.CLOSED) return;
       setStreamMessage("The research connection was interrupted. You can reopen this session to continue.");
@@ -205,8 +224,12 @@ export default function Home() {
   async function submitClarification(answer: string) {
     if (!selectedSessionId || answer.trim().length < 2) return;
     await clarifyResearch.mutateAsync({ sessionId: selectedSessionId, answer });
-    await utils.research.get.invalidate({ sessionId: selectedSessionId });
-    openStream(selectedSessionId);
+    const transition = beginClarificationResume({ clarification: liveClarification, message: streamMessage, activities: activityLog });
+    setLiveClarification(transition.clarification);
+    setStreamMessage(transition.message);
+    setActivityLog(transition.activities);
+    if (transition.shouldInvalidateSession) await utils.research.get.invalidate({ sessionId: selectedSessionId });
+    if (transition.shouldOpenStream) openStream(selectedSessionId);
   }
 
   async function exportSession(format: "markdown" | "html") {
@@ -222,7 +245,11 @@ export default function Home() {
   }
 
   const isWorking = createResearch.isPending || session?.status === "planning" || session?.status === "researching" || Boolean(activeStepId);
-  const outputFormat = session?.outputFormat ?? "report";
+  const isAwaitingClarification = Boolean(liveClarification) || session?.status === "awaiting_clarification";
+  const displayStatus = liveClarification ? "awaiting_clarification" : session?.status;
+  const outputFormat = liveIntent?.outputFormat ?? session?.outputFormat ?? "report";
+  const displayTitle = session?.title || liveIntent?.title || "Preparing your research brief";
+  const displayGoal = session?.researchGoal || liveIntent?.researchGoal || session?.query;
 
   return (
     <DashboardLayout sessions={sidebarSessions} selectedSessionId={selectedSessionId} isSessionsLoading={sessionsQuery.isLoading} sessionsError={Boolean(sessionsQuery.error)} onRetrySessions={() => void sessionsQuery.refetch()} onNewResearch={() => { resetLiveState(); setSelectedSessionId(null); setQuery(""); window.setTimeout(() => composerRef.current?.focus(), 0); }} onSelectSession={id => { streamRef.current?.close(); resetLiveState(); setSelectedSessionId(id); }} onSettings={() => toast("Research controls", { description: "Current prototype uses a cited public-source layer and stores completed work per signed-in user." })}>
@@ -251,18 +278,19 @@ export default function Home() {
             <section className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_340px]">
               <div className="min-w-0">
                 <div className="border-b border-border pb-7">
-                  <div className="flex flex-wrap items-center justify-between gap-3"><span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-2.5 py-1 font-mono-ui text-[10px] font-medium uppercase tracking-[0.12em] text-primary"><span className={cn("h-1.5 w-1.5 rounded-full", session?.status === "complete" ? "bg-emerald-500" : session?.status === "failed" ? "bg-rose-500" : "bg-amber-500")} /> {statusLabel(session?.status)}</span><span className="font-mono-ui text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Output · {outputFormat}</span></div>
-                  <h1 className="mt-4 max-w-4xl font-editorial text-4xl font-semibold leading-tight tracking-[-0.035em] sm:text-5xl">{session?.title || "Preparing your research brief"}</h1>
-                  <p className="mt-4 max-w-3xl text-sm leading-6 text-secondary-foreground">{session?.researchGoal || session?.query}</p>
+                  <div className="flex flex-wrap items-center justify-between gap-3"><span className="inline-flex items-center gap-2 rounded-full bg-primary/10 px-2.5 py-1 font-mono-ui text-[10px] font-medium uppercase tracking-[0.12em] text-primary"><span className={cn("h-1.5 w-1.5 rounded-full", displayStatus === "complete" ? "bg-emerald-500" : displayStatus === "failed" ? "bg-rose-500" : "bg-amber-500")} /> {statusLabel(displayStatus)}</span><span className="font-mono-ui text-[10px] uppercase tracking-[0.12em] text-muted-foreground">Output · {outputFormat}</span></div>
+                  <h1 className="mt-4 max-w-4xl font-editorial text-4xl font-semibold leading-tight tracking-[-0.035em] sm:text-5xl">{displayTitle}</h1>
+                  <p className="mt-4 max-w-3xl text-sm leading-6 text-secondary-foreground">{displayGoal}</p>
                 </div>
 
                 {detailQuery.isLoading && <div className="mt-5 flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin text-primary" /> Loading this saved research session…</div>}
                 {detailQuery.error && <div className="mt-5 flex items-start justify-between gap-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"><div className="flex gap-2"><CircleAlert className="mt-0.5 h-4 w-4 shrink-0" /><span>We could not load this session. {detailQuery.error.message}</span></div><Button size="sm" variant="outline" onClick={() => void detailQuery.refetch()} className="shrink-0 border-rose-200 bg-white text-rose-800"><ArrowRight className="mr-1 h-3.5 w-3.5" /> Retry</Button></div>}
 
                 {streamMessage && <div className="mt-5 flex items-start gap-3 rounded-xl border border-primary/20 bg-primary/[0.045] px-4 py-3 text-sm text-primary"><Loader2 className={cn("mt-0.5 h-4 w-4 shrink-0", isWorking && "animate-spin")} /><span>{streamMessage}</span></div>}
+                {activityLog.length > 0 && <section className="mt-6 overflow-hidden rounded-2xl border border-primary/20 bg-primary/[0.035]"><div className="flex items-center justify-between gap-4 px-5 py-4"><div className="flex min-w-0 items-center gap-3"><span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><Timer className={cn("h-4 w-4", (isWorking || !isAwaitingClarification) && "animate-pulse")} /></span><div><p className="font-mono-ui text-[10px] font-medium uppercase tracking-[0.15em] text-primary">Live research activity · {activityLog[activityLog.length - 1].phase}</p><p className="mt-1 text-sm leading-5 text-secondary-foreground">{activityLog[activityLog.length - 1].message}</p></div></div><span className="font-mono-ui text-xs text-primary">{activityLog[activityLog.length - 1].progress}%</span></div><div className="h-1 bg-primary/10"><div className="h-full bg-primary transition-all duration-500" style={{ width: `${Math.max(4, activityLog[activityLog.length - 1].progress)}%` }} /></div><div className="grid gap-1 border-t border-primary/10 px-5 py-3"><p className="font-mono-ui text-[9px] uppercase tracking-[0.12em] text-muted-foreground">Recent activity</p>{activityLog.slice(-3).reverse().map((activity, index) => <p key={`${activity.timestamp}-${index}`} className="truncate text-xs text-muted-foreground">{activity.message}</p>)}</div></section>}
 
-                {session?.status === "awaiting_clarification" ? <ClarificationCard question={session.clarifyingQuestion || "What should the research prioritize?"} onSubmit={submitClarification} loading={clarifyResearch.isPending} /> : <>
-                  {plan.length > 0 && <div className="mt-8"><div className="mb-3 flex items-center gap-2"><Layers3 className="h-4 w-4 text-primary" /><h2 className="font-mono-ui text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Research plan</h2></div><div className="grid gap-2">{plan.map((step, index) => { const isActive = activeStepId === step.id || step.status === "active"; const isDone = step.status === "complete"; return <div key={step.id} className={cn("flex items-start gap-3 rounded-xl border px-4 py-3 transition-colors", isActive ? "border-primary/30 bg-primary/[0.045]" : "border-border bg-card/60")}><span className={cn("mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px]", isDone ? "border-emerald-500 bg-emerald-500 text-white" : isActive ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground")}>{isDone ? <Check className="h-3 w-3" /> : isActive ? <Loader2 className="h-3 w-3 animate-spin" /> : index + 1}</span><div className="min-w-0"><p className="text-sm font-medium">{step.title}</p><p className="mt-0.5 text-xs leading-5 text-muted-foreground">{step.description}</p></div>{isActive && <span className="ml-auto font-mono-ui text-[9px] uppercase tracking-[0.12em] text-primary">Working</span>}</div> })}</div></div>}
+                {isAwaitingClarification ? <ClarificationCard question={liveClarification?.question || session?.clarifyingQuestion || "What should the research prioritize?"} onSubmit={submitClarification} loading={clarifyResearch.isPending} /> : <>
+                  {plan.length > 0 && <div className="mt-8"><div className="mb-3 flex items-center gap-2"><Layers3 className="h-4 w-4 text-primary" /><h2 className="font-mono-ui text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Research plan</h2></div><div className="grid gap-2">{plan.map((step, index) => { const isActive = activeStepId === step.id || step.status === "active"; const isDone = step.status === "complete"; const isSkipped = step.status === "skipped"; return <div key={step.id} className={cn("flex items-start gap-3 rounded-xl border px-4 py-3 transition-colors", isActive ? "border-primary/30 bg-primary/[0.045]" : isSkipped ? "border-amber-200 bg-amber-50/35" : "border-border bg-card/60")}><span className={cn("mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px]", isDone ? "border-emerald-500 bg-emerald-500 text-white" : isSkipped ? "border-amber-400 bg-amber-100 text-amber-800" : isActive ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground")}>{isDone ? <Check className="h-3 w-3" /> : isSkipped ? <Clock3 className="h-3 w-3" /> : isActive ? <Loader2 className="h-3 w-3 animate-spin" /> : index + 1}</span><div className="min-w-0"><p className="text-sm font-medium">{step.title}</p><p className="mt-0.5 text-xs leading-5 text-muted-foreground">{step.description}</p></div>{isActive && <span className="ml-auto font-mono-ui text-[9px] uppercase tracking-[0.12em] text-primary">Working</span>}{isSkipped && <span className="ml-auto font-mono-ui text-[9px] uppercase tracking-[0.12em] text-amber-700">Skipped</span>}</div> })}</div></div>}
                   {allFindings.length > 0 && <div className="mt-10"><div className="mb-5 flex items-center justify-between"><div><p className="font-mono-ui text-[10px] font-medium uppercase tracking-[0.16em] text-primary">Evidence synthesis</p><h2 className="mt-1 font-editorial text-3xl font-semibold tracking-[-0.025em]">What the evidence suggests</h2></div><span className="hidden rounded-full bg-muted px-3 py-1 font-mono-ui text-[10px] uppercase tracking-[0.1em] text-muted-foreground sm:inline">{allFindings.length} findings</span></div>{session?.finalOutput && <div className="mb-7 rounded-2xl border border-border bg-card px-5 py-4 text-sm leading-6 text-secondary-foreground"><Streamdown>{session.finalOutput}</Streamdown></div>}<FindingsView outputFormat={outputFormat} findings={allFindings} sourceMap={sourceMap} /></div>}
                   {!plan.length && !isWorking && !session?.errorMessage && <div className="mt-16 rounded-2xl border border-dashed border-border bg-card/40 p-8 text-center"><FileText className="mx-auto h-5 w-5 text-primary" /><p className="mt-3 text-sm font-medium">This session is ready to begin.</p><p className="mt-1 text-xs text-muted-foreground">Open the research stream to generate the adaptive plan.</p><Button variant="outline" onClick={() => openStream(selectedSessionId)} className="mt-5 rounded-xl"><Play className="mr-2 h-3.5 w-3.5" /> Run research</Button></div>}
                   {session?.errorMessage && <div className="mt-8 rounded-2xl border border-rose-200 bg-rose-50 p-5 text-rose-900"><div className="flex gap-3"><CircleAlert className="mt-0.5 h-4 w-4" /><div><p className="text-sm font-semibold">Research paused</p><p className="mt-1 text-sm leading-6">{session.errorMessage}</p><Button variant="outline" onClick={() => openStream(selectedSessionId)} className="mt-4 border-rose-200 bg-white text-rose-800 hover:bg-rose-100"><ArrowRight className="mr-2 h-3.5 w-3.5" /> Try again</Button></div></div></div>}

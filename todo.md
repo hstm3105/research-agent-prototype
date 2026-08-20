@@ -25,3 +25,12 @@
 - [x] Diagnose the failed research-session update that pauses query execution during intent/clarification persistence.
 - [x] Correct the session update contract, add a regression test for the failed execution path, and verify a live query can proceed.
 - [x] Exercise the session update through orchestration with a long intent value and retry the paused restaurant-research session past the former update failure.
+- [x] Render streamed clarification requests immediately in the active research workspace without requiring a session reload.
+- [x] Tighten the clarification policy so the agent proceeds on routine preference questions and asks only when ambiguity materially changes the research outcome.
+- [x] Add clear, continuously updated activity status and progress feedback throughout planning, source discovery, evidence analysis, and synthesis.
+- [x] Execute and inspect a complete live research run from intake through a cited completed result, then add regression coverage for the observed state transitions.
+- [x] Add clarification stream and clarification-to-research resume regression coverage for the active session state transition.
+- [x] Add client-level active-session coverage for streamed clarification visibility and clarification submit followed by resumed stream invalidation.
+- [x] Add a rendered client-flow test that simulates the active workspace clarification event and successful answer submission without page reload.
+- [x] Recover from an empty public-source response by marking the step skipped, streaming the reason, and continuing the remaining research plan instead of failing the entire session.
+- [x] Recover from unavailable per-step model analysis by preserving sources, producing an attributable source-based fallback finding, and completing the remaining plan with a clear activity message.

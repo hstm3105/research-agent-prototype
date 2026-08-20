@@ -20,7 +20,7 @@ vi.mock("../db", () => mocks.db);
 vi.mock("../_core/llm", () => mocks.llm);
 vi.mock("./search", async importOriginal => ({ ...(await importOriginal<typeof import("./search")>()), ...mocks.search }));
 
-import { applyPlanAdaptation, runResearchSession } from "./agent";
+import { applyPlanAdaptation, runResearchSession, shouldRequestClarification } from "./agent";
 import { normalizeSearchPayload } from "./search";
 
 describe("normalizeSearchPayload", () => {
@@ -100,6 +100,22 @@ describe("applyPlanAdaptation", () => {
   });
 });
 
+describe("clarification policy", () => {
+  it("does not block routine restaurant research for ordinary preference details", () => {
+    expect(shouldRequestClarification(
+      "Find me the best Italian restaurants in Jaipur",
+      { requiresClarification: true, clarifyingQuestion: "Do you prefer vegetarian-only options or fine dining?" }
+    )).toBe(false);
+  });
+
+  it("allows a clarification only when a materially constrained request is underspecified", () => {
+    expect(shouldRequestClarification(
+      "Legal requirements?",
+      { requiresClarification: true, clarifyingQuestion: "Which jurisdiction applies?" }
+    )).toBe(true);
+  });
+});
+
 describe("runResearchSession adaptive-plan contract", () => {
   const longIntent = "Identify the best Italian restaurants in Jaipur, India, with current trustworthy picks suitable for dine-in; compare price level, vibe, vegetarian options, alcohol availability, and reservation details.";
   const source = {
@@ -145,7 +161,9 @@ describe("runResearchSession adaptive-plan contract", () => {
     await runResearchSession({ sessionId: "session-1", userId: 1, emit: event => events.push(event) });
 
     const planEvents = events.filter(event => event.type === "plan");
+    const activityEvents = events.filter(event => event.type === "activity");
     expect(planEvents).toHaveLength(2);
+    expect(activityEvents.map(event => event.phase)).toEqual(expect.arrayContaining(["planning", "discovery", "analysis", "synthesis"]));
     expect((planEvents[1].plan as Array<{ title: string }>)[1].title).toBe("Evidence-gap comparison");
     expect(mocks.db.updateResearchStepDetails).toHaveBeenCalledWith(
       expect.any(String),
@@ -161,5 +179,31 @@ describe("runResearchSession adaptive-plan contract", () => {
       1,
       expect.objectContaining({ intent: longIntent })
     );
+  });
+
+  it("skips an empty-source step and completes the remaining session instead of failing", async () => {
+    vi.clearAllMocks();
+    mocks.db.getResearchSessionForUser.mockResolvedValue({ id: "session-2", query: "Explain a narrow topic", status: "draft" });
+    mocks.llm.listLLMModels.mockResolvedValue({ data: [{ id: "gpt-5" }] });
+    mocks.search.searchPublicWeb.mockResolvedValue([]);
+    mocks.llm.invokeLLM.mockResolvedValueOnce({ choices: [{ message: { content: JSON.stringify({
+      title: "Narrow topic",
+      intent: "Explain a narrow topic with evidence.",
+      researchGoal: "Explain the requested topic.",
+      requiresClarification: false,
+      clarifyingQuestion: "",
+      outputFormat: "summary",
+      plan: [{ title: "Unavailable evidence", description: "Check the narrow evidence set.", searchQuery: "unavailable source" }],
+    }) } }] });
+    const events: Array<Record<string, unknown>> = [];
+
+    await runResearchSession({ sessionId: "session-2", userId: 1, emit: event => events.push(event) });
+
+    expect(events).toEqual(expect.arrayContaining([
+      expect.objectContaining({ type: "step", status: "skipped" }),
+      expect.objectContaining({ type: "activity", message: expect.stringContaining("Skipping this narrow step") }),
+      expect.objectContaining({ type: "complete" }),
+    ]));
+    expect(mocks.db.updateResearchSessionForUser).toHaveBeenCalledWith("session-2", 1, expect.objectContaining({ status: "complete" }));
   });
 });
