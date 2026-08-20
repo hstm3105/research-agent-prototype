@@ -38,3 +38,10 @@
 - [x] Persist the selected depth per research session and return it in session history and detail contracts.
 - [x] Adapt plan breadth and execution work to the selected depth, with regression coverage for quick and deep modes.
 - [x] Validate the depth selector in the rendered intake flow and save the completed update checkpoint.
+- [x] Make the home workspace open to a fresh research composer by default rather than automatically selecting the most recent session.
+- [x] Ensure the New Research control reliably clears the active session and exposes the research-depth selector on desktop and mobile.
+- [x] Diagnose the end-to-end research-agent lifecycle, including intake, planning, clarification, execution, recovery, persistence, export, and session-navigation paths.
+- [x] Add regression coverage for fresh-start navigation and depth-control visibility, then validate the repaired workspace experience.
+- [x] Eliminate stale stream-event state captures so live clarification and activity updates always apply to the current workspace state.
+- [x] Define and test explicit saved-session navigation semantics, keeping sidebar selection read-only until the user chooses to run or resume research.
+- [x] Confirm export controls remain available only for completed sessions and document the lifecycle diagnostic findings.

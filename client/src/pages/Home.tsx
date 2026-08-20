@@ -4,7 +4,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Textarea } from "@/components/ui/textarea";
 import { trpc } from "@/lib/trpc";
 import { cn } from "@/lib/utils";
-import { appendResearchActivity, applyClarificationTransition, beginClarificationResume, type ResearchActivity } from "@/lib/researchStreamState";
+import { appendResearchActivity, type ResearchActivity } from "@/lib/researchStreamState";
 import { toast } from "sonner";
 import { Streamdown } from "streamdown";
 import {
@@ -109,10 +109,6 @@ export default function Home() {
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const detailQuery = trpc.research.get.useQuery({ sessionId: selectedSessionId ?? "pending" }, { enabled: Boolean(selectedSessionId), refetchOnWindowFocus: false });
 
-  useEffect(() => {
-    if (!selectedSessionId && sessionsQuery.data?.length) setSelectedSessionId(sessionsQuery.data[0].id);
-  }, [selectedSessionId, sessionsQuery.data]);
-
   useEffect(() => () => streamRef.current?.close(), []);
 
   useEffect(() => {
@@ -174,12 +170,12 @@ export default function Home() {
       if (data.type === "activity") { recordActivity(data); setStreamMessage(data.message); }
       if (data.type === "intent") { setLiveIntent(data.intent); setStreamMessage(`Interpreting objective · ${data.intent.researchGoal}`); }
       if (data.type === "clarification") {
-        const transition = applyClarificationTransition({ clarification: liveClarification, message: streamMessage, activities: activityLog }, data.question);
-        setLiveClarification(transition.clarification);
-        setStreamMessage(transition.message);
-        setActivityLog(transition.activities);
-        if (transition.shouldInvalidateSession) { void utils.research.get.invalidate({ sessionId }); void utils.research.list.invalidate(); }
-        if (transition.shouldCloseStream) stream.close();
+        setLiveClarification({ question: data.question });
+        setStreamMessage("The agent needs one decision before continuing.");
+        setActivityLog(current => appendResearchActivity(current, { phase: "planning", message: "One material decision is needed before continuing research.", progress: 20 }));
+        void utils.research.get.invalidate({ sessionId });
+        void utils.research.list.invalidate();
+        stream.close();
       }
       if (data.type === "plan") {
         setLivePlan(data.plan);
@@ -232,12 +228,11 @@ export default function Home() {
   async function submitClarification(answer: string) {
     if (!selectedSessionId || answer.trim().length < 2) return;
     await clarifyResearch.mutateAsync({ sessionId: selectedSessionId, answer });
-    const transition = beginClarificationResume({ clarification: liveClarification, message: streamMessage, activities: activityLog });
-    setLiveClarification(transition.clarification);
-    setStreamMessage(transition.message);
-    setActivityLog(transition.activities);
-    if (transition.shouldInvalidateSession) await utils.research.get.invalidate({ sessionId: selectedSessionId });
-    if (transition.shouldOpenStream) openStream(selectedSessionId);
+    setLiveClarification(null);
+    setStreamMessage("Clarification saved. Resuming the research plan.");
+    setActivityLog(current => appendResearchActivity(current, { phase: "planning", message: "Clarification saved. Resuming the research plan.", progress: 22 }));
+    await utils.research.get.invalidate({ sessionId: selectedSessionId });
+    openStream(selectedSessionId);
   }
 
   async function exportSession(format: "markdown" | "html") {
@@ -260,7 +255,7 @@ export default function Home() {
   const displayGoal = session?.researchGoal || liveIntent?.researchGoal || session?.query;
 
   return (
-    <DashboardLayout sessions={sidebarSessions} selectedSessionId={selectedSessionId} isSessionsLoading={sessionsQuery.isLoading} sessionsError={Boolean(sessionsQuery.error)} onRetrySessions={() => void sessionsQuery.refetch()} onNewResearch={() => { resetLiveState(); setSelectedSessionId(null); setQuery(""); window.setTimeout(() => composerRef.current?.focus(), 0); }} onSelectSession={id => { streamRef.current?.close(); resetLiveState(); setSelectedSessionId(id); }} onSettings={() => toast("Research controls", { description: "Current prototype uses a cited public-source layer and stores completed work per signed-in user." })}>
+    <DashboardLayout sessions={sidebarSessions} selectedSessionId={selectedSessionId} isSessionsLoading={sessionsQuery.isLoading} sessionsError={Boolean(sessionsQuery.error)} onRetrySessions={() => void sessionsQuery.refetch()} onNewResearch={() => { streamRef.current?.close(); resetLiveState(); setSelectedSessionId(null); setQuery(""); setResearchDepth("standard"); window.setTimeout(() => composerRef.current?.focus(), 0); }} onSelectSession={id => { streamRef.current?.close(); resetLiveState(); setSelectedSessionId(id); }} onSettings={() => toast("Research controls", { description: "Current prototype uses a cited public-source layer and stores completed work per signed-in user." })}>
       <div className="min-h-screen">
         <header className="flex min-h-16 items-center justify-between border-b border-border/80 px-5 sm:px-8 lg:px-10">
           <div className="flex items-center gap-3"><span className="font-mono-ui text-[10px] font-medium uppercase tracking-[0.18em] text-primary">Research workspace</span><span className="hidden h-1 w-1 rounded-full bg-muted-foreground/60 sm:inline" /><span className="hidden text-xs text-muted-foreground sm:inline">Plan · discover · synthesize</span></div>
