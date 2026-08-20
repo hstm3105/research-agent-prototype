@@ -22,3 +22,6 @@
 - [x] Add Vitest coverage for planning, source normalization, citation validation, export rendering, and user-scoped persistence.
 - [x] Verify the completed interface in desktop and mobile views, resolve console/runtime errors, and save the final project checkpoint.
 - [x] Confirm post-restart runtime logs are clean and save the validated final project checkpoint.
+- [x] Diagnose the failed research-session update that pauses query execution during intent/clarification persistence.
+- [x] Correct the session update contract, add a regression test for the failed execution path, and verify a live query can proceed.
+- [x] Exercise the session update through orchestration with a long intent value and retry the paused restaurant-research session past the former update failure.

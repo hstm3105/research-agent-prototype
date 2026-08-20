@@ -101,6 +101,7 @@ describe("applyPlanAdaptation", () => {
 });
 
 describe("runResearchSession adaptive-plan contract", () => {
+  const longIntent = "Identify the best Italian restaurants in Jaipur, India, with current trustworthy picks suitable for dine-in; compare price level, vibe, vegetarian options, alcohol availability, and reservation details.";
   const source = {
     title: "Public source",
     url: "https://www.youtube.com/watch?v=source-1",
@@ -117,7 +118,7 @@ describe("runResearchSession adaptive-plan contract", () => {
     mocks.llm.invokeLLM
       .mockResolvedValueOnce({ choices: [{ message: { content: JSON.stringify({
         title: "Assess the change",
-        intent: "comparative assessment",
+        intent: longIntent,
         researchGoal: "Assess the decision using public evidence.",
         requiresClarification: false,
         clarifyingQuestion: "",
@@ -154,6 +155,11 @@ describe("runResearchSession adaptive-plan contract", () => {
       "session-1",
       1,
       expect.objectContaining({ planJson: expect.stringContaining("Evidence-gap comparison") })
+    );
+    expect(mocks.db.updateResearchSessionForUser).toHaveBeenCalledWith(
+      "session-1",
+      1,
+      expect.objectContaining({ intent: longIntent })
     );
   });
 });

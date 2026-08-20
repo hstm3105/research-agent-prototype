@@ -1,0 +1,1 @@
+ALTER TABLE `researchSessions` MODIFY COLUMN `intent` text;
