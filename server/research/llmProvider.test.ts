@@ -1,12 +1,21 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+
+const db = vi.hoisted(() => ({ reserveProviderRequest: vi.fn() }));
+
+vi.mock("../db", () => db);
 import { chooseResearchModel, GEMINI_RESEARCH_MODELS, invokeGroundedRecommendationResearch, invokeResearchLLM, providerAttemptsFromError } from "./llmProvider";
 
 const originalFetch = global.fetch;
 const originalApiKey = process.env.GEMINI_API_KEY;
 
+beforeEach(() => {
+  db.reserveProviderRequest.mockResolvedValue({ scheduledAtMs: Date.now(), delayMs: 0 });
+});
+
 afterEach(() => {
   global.fetch = originalFetch;
   process.env.GEMINI_API_KEY = originalApiKey;
+  vi.clearAllMocks();
 });
 
 describe("Gemini research provider", () => {
@@ -45,6 +54,30 @@ describe("Gemini research provider", () => {
     expect(result.model).toBe("gemini-3.1-flash-lite");
     expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2);
     expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls[1][0]).toContain(GEMINI_RESEARCH_MODELS[1]);
+  });
+
+  it("reserves a cooldown after a 429 instead of retrying or immediately consuming fallback RPM", async () => {
+    process.env.GEMINI_API_KEY = "test-key";
+    global.fetch = vi.fn().mockResolvedValueOnce(new Response("rate limited", { status: 429, statusText: "Too Many Requests" })) as typeof fetch;
+
+    const failure = await invokeResearchLLM({ messages: [{ role: "user", content: "Continue research." }] }).catch(error => error);
+
+    expect(failure).toHaveProperty("message", "AI_PROVIDERS_UNAVAILABLE");
+    expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(1);
+    expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls.every(([url]) => String(url).includes(GEMINI_RESEARCH_MODELS[0]))).toBe(true);
+    expect(db.reserveProviderRequest).toHaveBeenCalledWith(expect.objectContaining({ providerKey: `gemini:${GEMINI_RESEARCH_MODELS[0]}`, minIntervalMs: 60_000 }));
+  });
+
+  it("does not issue a Gemini request when the shared rate queue is already beyond the bounded wait window", async () => {
+    process.env.GEMINI_API_KEY = "test-key";
+    db.reserveProviderRequest.mockResolvedValue({ scheduledAtMs: Date.now() + 18_001, delayMs: 18_001 });
+    global.fetch = vi.fn() as typeof fetch;
+
+    const failure = await invokeResearchLLM({ messages: [{ role: "user", content: "Continue research." }] }).catch(error => error);
+
+    expect(failure).toHaveProperty("message", "AI_PROVIDERS_UNAVAILABLE");
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(providerAttemptsFromError(failure)).toHaveLength(1);
   });
 
   it("emits the preserved-work sentinel if both requested Gemini models fail", async () => {

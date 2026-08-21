@@ -1,7 +1,13 @@
 import type { InvokeParams, InvokeResult, MessageContent, ResponseFormat } from "../_core/llm";
+import { reserveProviderRequest } from "../db";
 
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
 export const GEMINI_RESEARCH_MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"] as const;
+export const GEMINI_SAFE_RPM = 10;
+export const GEMINI_MIN_REQUEST_INTERVAL_MS = Math.ceil(60_000 / GEMINI_SAFE_RPM);
+const GEMINI_MAX_QUEUE_WAIT_MS = 18_000;
+const GEMINI_429_COOLDOWN_MS = 60_000;
+const inMemoryProviderSchedule = new Map<string, number>();
 
 export type GeminiProviderAttempt = {
   provider: "gemini";
@@ -21,6 +27,43 @@ export type GroundedRecommendationSource = {
 export class ResearchProviderUnavailableError extends Error {
   constructor(readonly attempts: GeminiProviderAttempt[]) {
     super("AI_PROVIDERS_UNAVAILABLE");
+  }
+}
+
+export class GeminiRateLimitQueueError extends Error {
+  constructor(readonly retryAfterMs: number) {
+    super("Gemini rate-limit queue is at capacity");
+  }
+}
+
+function wait(ms: number) {
+  return new Promise<void>(resolve => setTimeout(resolve, ms));
+}
+
+function isGemini429(error: unknown) {
+  return /Gemini invoke failed:\s*429\b/i.test(error instanceof Error ? error.message : String(error ?? ""));
+}
+
+async function waitForGeminiRequestSlot(model: string) {
+  const reservation = await reserveGeminiRequest({ providerKey: `gemini:${model}`, minIntervalMs: GEMINI_MIN_REQUEST_INTERVAL_MS, maxQueueWaitMs: GEMINI_MAX_QUEUE_WAIT_MS });
+  if (reservation.accepted === false || reservation.delayMs > GEMINI_MAX_QUEUE_WAIT_MS) throw new GeminiRateLimitQueueError(reservation.delayMs);
+  if (reservation.delayMs) await wait(reservation.delayMs);
+}
+
+async function applyGemini429Cooldown(model: string) {
+  await reserveGeminiRequest({ providerKey: `gemini:${model}`, minIntervalMs: GEMINI_429_COOLDOWN_MS });
+}
+
+async function reserveGeminiRequest(input: { providerKey: string; minIntervalMs: number; maxQueueWaitMs?: number }) {
+  try {
+    return await reserveProviderRequest(input);
+  } catch {
+    const nowMs = Date.now();
+    const scheduledAtMs = Math.max(nowMs, inMemoryProviderSchedule.get(input.providerKey) ?? 0);
+    const delayMs = Math.max(0, scheduledAtMs - nowMs);
+    if (input.maxQueueWaitMs !== undefined && delayMs > input.maxQueueWaitMs) return { scheduledAtMs, delayMs, accepted: false as const };
+    inMemoryProviderSchedule.set(input.providerKey, scheduledAtMs + input.minIntervalMs);
+    return { scheduledAtMs, delayMs, accepted: true as const };
   }
 }
 
@@ -118,30 +161,37 @@ export async function chooseResearchModel() {
 export async function invokeGemini(params: InvokeParams, model: string): Promise<InvokeResult> {
   const apiKey = geminiApiKey();
   if (!apiKey) throw new Error("GEMINI_API_KEY is not configured");
-  const response = await fetch(`${GEMINI_BASE_URL}/models/${model}:generateContent`, {
-    method: "POST",
-    headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
-    body: JSON.stringify(toGeminiRequest(params)),
-  });
-  if (!response.ok) {
-    const detail = await response.text();
-    throw new Error(`Gemini invoke failed: ${response.status} ${response.statusText} – ${detail}`);
+  for (let attempt = 0; attempt < 1; attempt += 1) {
+    await waitForGeminiRequestSlot(model);
+    const response = await fetch(`${GEMINI_BASE_URL}/models/${model}:generateContent`, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
+      body: JSON.stringify(toGeminiRequest(params)),
+    });
+    if (!response.ok) {
+      const error = new Error(`Gemini invoke failed: ${response.status} ${response.statusText} – ${await response.text()}`);
+      if (response.status === 429) {
+        await applyGemini429Cooldown(model);
+      }
+      throw error;
+    }
+    const payload = await response.json() as GeminiResponse;
+    const candidate = payload.candidates?.[0];
+    const content = candidate?.content?.parts?.map(part => part.text ?? "").join("") || "";
+    if (!content) throw new Error("Gemini returned an empty response");
+    return {
+      id: `gemini-${Date.now()}`,
+      created: Math.floor(Date.now() / 1000),
+      model,
+      choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: candidate?.finishReason ?? "stop" }],
+      usage: payload.usageMetadata ? {
+        prompt_tokens: payload.usageMetadata.promptTokenCount ?? 0,
+        completion_tokens: payload.usageMetadata.candidatesTokenCount ?? 0,
+        total_tokens: payload.usageMetadata.totalTokenCount ?? 0,
+      } : undefined,
+    };
   }
-  const payload = await response.json() as GeminiResponse;
-  const candidate = payload.candidates?.[0];
-  const content = candidate?.content?.parts?.map(part => part.text ?? "").join("") || "";
-  if (!content) throw new Error("Gemini returned an empty response");
-  return {
-    id: `gemini-${Date.now()}`,
-    created: Math.floor(Date.now() / 1000),
-    model,
-    choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: candidate?.finishReason ?? "stop" }],
-    usage: payload.usageMetadata ? {
-      prompt_tokens: payload.usageMetadata.promptTokenCount ?? 0,
-      completion_tokens: payload.usageMetadata.candidatesTokenCount ?? 0,
-      total_tokens: payload.usageMetadata.totalTokenCount ?? 0,
-    } : undefined,
-  };
+  throw new Error("Gemini invoke failed");
 }
 
 /** Uses Gemini Google Search grounding to widen public-web evidence for local recommendations and shortlists. */
@@ -151,19 +201,29 @@ export async function invokeGroundedRecommendationResearch(input: { request: str
   const attempts: GeminiProviderAttempt[] = [];
   for (const model of GEMINI_RESEARCH_MODELS) {
     try {
-      const response = await fetch(`${GEMINI_BASE_URL}/interactions`, {
-        method: "POST",
-        headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
-        body: JSON.stringify({ model, input: input.request, tools: [{ type: "google_search" }] }),
-      });
-      if (!response.ok) throw new Error(`Gemini invoke failed: ${response.status} ${response.statusText} – ${await response.text()}`);
-      const payload = await response.json() as GroundedInteractionResponse;
-      const rawOutput = payload.output_text || payload.steps?.flatMap(step => step.content ?? []).filter(content => content.type === "text").map(content => content.text || "").join("\n") || "";
-      if (!rawOutput.trim()) throw new Error("Gemini returned an empty grounded response");
-      const sources = groundedSourcesFromPayload(payload);
-      return { output: rawOutput.trim(), sources };
+      for (let attempt = 0; attempt < 1; attempt += 1) {
+        await waitForGeminiRequestSlot(model);
+        const response = await fetch(`${GEMINI_BASE_URL}/interactions`, {
+          method: "POST",
+          headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
+          body: JSON.stringify({ model, input: input.request, tools: [{ type: "google_search" }] }),
+        });
+        if (!response.ok) {
+          const error = new Error(`Gemini invoke failed: ${response.status} ${response.statusText} – ${await response.text()}`);
+          if (response.status === 429) {
+            await applyGemini429Cooldown(model);
+          }
+          throw error;
+        }
+        const payload = await response.json() as GroundedInteractionResponse;
+        const rawOutput = payload.output_text || payload.steps?.flatMap(step => step.content ?? []).filter(content => content.type === "text").map(content => content.text || "").join("\n") || "";
+        if (!rawOutput.trim()) throw new Error("Gemini returned an empty grounded response");
+        const sources = groundedSourcesFromPayload(payload);
+        return { output: rawOutput.trim(), sources };
+      }
     } catch (error) {
       attempts.push(toAttempt(model, error));
+      if (isGemini429(error) || error instanceof GeminiRateLimitQueueError) break;
     }
   }
   throw new ResearchProviderUnavailableError(attempts);
@@ -194,7 +254,8 @@ export async function invokeResearchLLM(params: InvokeParams): Promise<InvokeRes
       return await invokeGemini({ ...params, model }, model);
     } catch (error) {
       attempts.push(toAttempt(model, error));
-      // The secondary Gemini model is a purposeful provider-level fallback.
+      if (isGemini429(error) || error instanceof GeminiRateLimitQueueError) break;
+      // The secondary Gemini model is a purposeful fallback for non-rate-limit provider failures.
     }
   }
   throw new ResearchProviderUnavailableError(attempts);

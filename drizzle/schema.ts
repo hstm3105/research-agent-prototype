@@ -1,4 +1,4 @@
-import { index, int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
+import { bigint, index, int, mysqlEnum, mysqlTable, text, timestamp, varchar } from "drizzle-orm/mysql-core";
 
 /**
  * Core user table backing auth flow.
@@ -114,6 +114,12 @@ export const researchRecommendationOptions = mysqlTable("researchRecommendationO
 }, table => [
   index("researchRecommendationOptions_session_rank_idx").on(table.sessionId, table.rank),
 ]);
+
+export const providerRateLimits = mysqlTable("providerRateLimits", {
+  providerKey: varchar("providerKey", { length: 96 }).primaryKey(),
+  nextAllowedAtMs: bigint("nextAllowedAtMs", { mode: "number" }).notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
 
 export const researchExports = mysqlTable("researchExports", {
   id: varchar("id", { length: 48 }).primaryKey(),

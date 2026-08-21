@@ -104,3 +104,6 @@
 - [x] Define and validate a typed recommendation contract covering ranked options, decision criteria, source-linked evidence, caveats, and an actionable selection recommendation.
 - [x] Persist extracted per-option recommendation facts and citations, then render a structured comparison shortlist rather than relying exclusively on freeform final Markdown.
 - [ ] Validate the typed grounded multi-option Jaipur café shortlist end to end when Gemini Search-grounding quota is available.
+- [x] Add a shared server-side Gemini request governor with a conservative per-model RPM budget below the observed 15 RPM limit.
+- [x] Pace model fallback, retries, and concurrent research streams so they cannot create burst traffic that exceeds Gemini RPM limits.
+- [ ] Add deterministic rate-governor regression coverage and validate one live research flow after the current quota window recovers.

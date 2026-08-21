@@ -10,6 +10,7 @@ import {
   researchSessions,
   researchSources,
   researchSteps,
+  providerRateLimits,
   users,
 } from "../drizzle/schema";
 import { ENV } from "./_core/env";
@@ -181,6 +182,21 @@ export async function replaceResearchRecommendationOptions(sessionId: string, op
 export async function listResearchRecommendationOptions(sessionId: string) {
   const db = await requireDb();
   return db.select().from(researchRecommendationOptions).where(eq(researchRecommendationOptions.sessionId, sessionId)).orderBy(researchRecommendationOptions.rank);
+}
+
+export async function reserveProviderRequest(input: { providerKey: string; minIntervalMs: number; maxQueueWaitMs?: number; nowMs?: number }) {
+  const db = await requireDb();
+  const nowMs = input.nowMs ?? Date.now();
+  return db.transaction(async tx => {
+    await tx.insert(providerRateLimits).values({ providerKey: input.providerKey, nextAllowedAtMs: 0 }).onDuplicateKeyUpdate({ set: { updatedAt: new Date() } });
+    const rows = await tx.select().from(providerRateLimits).where(eq(providerRateLimits.providerKey, input.providerKey)).for("update");
+    const current = rows[0];
+    const scheduledAtMs = Math.max(nowMs, current?.nextAllowedAtMs ?? 0);
+    const delayMs = Math.max(0, scheduledAtMs - nowMs);
+    if (input.maxQueueWaitMs !== undefined && delayMs > input.maxQueueWaitMs) return { scheduledAtMs, delayMs, accepted: false as const };
+    await tx.update(providerRateLimits).set({ nextAllowedAtMs: scheduledAtMs + input.minIntervalMs, updatedAt: new Date() }).where(eq(providerRateLimits.providerKey, input.providerKey));
+    return { scheduledAtMs, delayMs, accepted: true as const };
+  });
 }
 
 export async function createResearchExport(input: typeof researchExports.$inferInsert) {

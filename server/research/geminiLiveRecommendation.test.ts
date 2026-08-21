@@ -14,5 +14,5 @@ describe.skipIf(!enabled)("live Gemini grounded recommendation research", () => 
     expect(() => JSON.parse(result.output)).not.toThrow();
     expect(JSON.parse(result.output)).toMatchObject({ criteria: expect.any(Array), options: expect.any(Array), selectionAdvice: expect.any(String) });
     expect(result.sources.length).toBeGreaterThanOrEqual(3);
-  }, 45_000);
+  }, 130_000);
 });

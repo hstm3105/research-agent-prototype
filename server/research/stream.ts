@@ -8,6 +8,14 @@ function writeEvent(res: Response, event: ResearchProgressEvent) {
   res.write(`event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`);
 }
 
+const activeResearchSubscribers = new Map<string, Set<Response>>();
+
+function broadcastResearchEvent(subscribers: Set<Response>, event: ResearchProgressEvent) {
+  subscribers.forEach(subscriber => {
+    if (!subscriber.writableEnded) writeEvent(subscriber, event);
+  });
+}
+
 export function registerResearchStream(app: Express) {
   app.get("/api/research/stream/:sessionId", async (req: Request, res: Response) => {
     const user = await sdk.authenticateRequest(req).catch(() => null);
@@ -27,7 +35,22 @@ export function registerResearchStream(app: Express) {
     res.setHeader("Connection", "keep-alive");
     res.flushHeaders();
     writeEvent(res, { type: "connected", sessionId: session.id });
-    await runResearchSession({ sessionId: session.id, userId: user.id, emit: event => writeEvent(res, event) });
-    res.end();
+
+    const activeSubscribers = activeResearchSubscribers.get(session.id);
+    if (activeSubscribers) {
+      activeSubscribers.add(res);
+      req.on("close", () => activeSubscribers.delete(res));
+      return;
+    }
+
+    const subscribers = new Set<Response>([res]);
+    activeResearchSubscribers.set(session.id, subscribers);
+    req.on("close", () => subscribers.delete(res));
+    try {
+      await runResearchSession({ sessionId: session.id, userId: user.id, emit: event => broadcastResearchEvent(subscribers, event) });
+    } finally {
+      activeResearchSubscribers.delete(session.id);
+      subscribers.forEach(subscriber => { if (!subscriber.writableEnded) subscriber.end(); });
+    }
   });
 }
