@@ -114,3 +114,4 @@
 - [x] Implement normalized Tavily general-web retrieval with bounded video-source fallback, evidence routing, and source-quality signals; retain Google Maps Places only for local venues.
 - [x] Validate a non-local Tavily-plus-Gemini research brief and a local Maps-plus-Gemini venue shortlist end to end with attributable evidence.
 - [x] Configure server-only Tavily credentials and validate the provider connection before enabling general-web retrieval.
+- [x] Update workspace evidence-source messaging to accurately distinguish Tavily general-web retrieval, Google Maps Places local evidence, and the retained video fallback.
