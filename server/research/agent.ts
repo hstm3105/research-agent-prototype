@@ -13,8 +13,8 @@ import {
   updateResearchStep,
   updateResearchStepDetails,
 } from "../db";
-import { invokeLLM, listLLMModels } from "../_core/llm";
 import { searchPublicWeb } from "./search";
+import { chooseResearchModel, invokeResearchLLM } from "./llmProvider";
 import { scoreResearchSource } from "./sourceQuality";
 import type { AgentFinding, ResearchIntent, ResearchPlanStep, ResearchProgressEvent } from "./types";
 
@@ -25,13 +25,6 @@ function parseJson<T>(value: unknown): T {
   if (typeof raw !== "string") throw new Error("The LLM returned an empty structured response");
   const cleaned = raw.replace(/^```json\s*/i, "").replace(/\s*```$/, "").trim();
   return JSON.parse(cleaned) as T;
-}
-
-async function chooseResearchModel() {
-  const models = await listLLMModels();
-  return models.data.find(model => model.id === "gpt-5")?.id
-    ?? models.data.find(model => /sonnet|gpt-5/i.test(model.id))?.id
-    ?? models.data[0]?.id;
 }
 
 const intentSchema = {
@@ -98,7 +91,7 @@ const adaptationSchema = {
 
 export async function interpretResearchQuery(query: string, researchDepth: "quick" | "standard" | "deep" = "standard"): Promise<ResearchIntent> {
   const model = await chooseResearchModel();
-  const response = await invokeLLM({
+  const response = await invokeResearchLLM({
     model,
     messages: [
       {
@@ -189,7 +182,7 @@ async function proposeAdaptiveChange(input: {
   sources: Array<{ title: string; url: string; publisher: string | null; excerpt: string | null }>;
 }) {
   const model = await chooseResearchModel();
-  const response = await invokeLLM({
+  const response = await invokeResearchLLM({
     model,
     messages: [
       { role: "system", content: "You are reviewing a live research plan after source retrieval. Either (1) revise one pending step if its search query no longer best fills the evidence gap, (2) append one distinct coverage step if a material gap is not addressed, or (3) choose none. Never change a completed step. For action=revise, targetOrdinal must identify a pending existing step; for append, use -1; for none, use -1 and empty strings." },
@@ -213,7 +206,7 @@ function buildFinalOutput(intent: ResearchIntent, findingCount: number): string 
 
 export function isAiServiceLimitError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error ?? "");
-  return /\b412\b|usage exhausted|rate limit|quota|resource exhausted/i.test(message);
+  return /AI_PROVIDERS_UNAVAILABLE|\b412\b|usage exhausted|rate limit|quota|resource exhausted/i.test(message);
 }
 
 export function toPublicResearchError(error: unknown) {
@@ -386,7 +379,7 @@ export async function runResearchSession(input: {
       let result: { findings: AgentFinding[] };
       try {
         const model = await chooseResearchModel();
-        const analysis = await invokeLLM({
+        const analysis = await invokeResearchLLM({
           model,
           messages: [
             { role: "system", content: "You are a precise research analyst. Write only grounded findings using the supplied public sources. Every finding must name only source URLs from the source packet; do not use training knowledge as evidence. If the sources are insufficient, return an empty findings list rather than making an unsupported claim." },

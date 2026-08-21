@@ -136,6 +136,16 @@ describe("Home active-session clarification flow", () => {
     expect(await screen.findByPlaceholderText(/What do you need to understand/i)).toBeTruthy();
   });
 
+  it("keeps a dual-provider outage in the preserved-work recovery panel without provider diagnostics", async () => {
+    mocks.limitMode = true;
+    const user = userEvent.setup();
+    render(<Home />);
+
+    await user.click(screen.getByRole("button", { name: /open active session/i }));
+    expect(await screen.findByLabelText("AI service recovery")).toBeTruthy();
+    expect(screen.queryByText(/OpenRouter invoke failed|fallback unavailable|AI_PROVIDERS_UNAVAILABLE/i)).toBeNull();
+  });
+
   it("offers sparse-evidence broadening, transparent source signals, and revocable sharing on a completed brief", async () => {
     mocks.completedMode = true;
     const user = userEvent.setup();

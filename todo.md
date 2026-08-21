@@ -67,3 +67,10 @@
 - [x] Add database migrations, server/client regression coverage, and responsive verification for broaden-scope recovery, source scoring, and shared briefs.
 - [x] Add rendered client coverage for Broaden Scope, source-quality badges, share-link creation, and share-link revocation in the completed workspace.
 - [x] Add rendered client coverage for valid and unavailable read-only shared brief routes.
+- [x] Add an OpenRouter-backed LLM provider that securely uses a server-only API key for research planning, adaptation, and evidence synthesis.
+- [x] Keep the existing built-in provider as a fallback and surface a clear recoverable error if neither LLM provider is available.
+- [x] Add regression coverage for OpenRouter request shaping, provider selection, fallback behavior, and retained AI-service-limit recovery.
+- [x] Convert dual-provider unavailability into a non-technical recoverable research state instead of exposing raw OpenRouter or fallback provider details.
+- [x] Add regression coverage for dual-provider failure and its preserved-work recovery message in the research workflow.
+- [x] Add orchestration coverage that persists the existing preserved-work recovery state when both OpenRouter and the built-in provider fail during research execution.
+- [x] Add rendered coverage confirming a dual-provider outage surfaces the existing preserved-work recovery panel rather than provider details.

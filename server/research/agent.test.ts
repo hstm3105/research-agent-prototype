@@ -20,6 +20,13 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../db", () => mocks.db);
 vi.mock("../_core/llm", () => mocks.llm);
+vi.mock("./llmProvider", () => ({
+  invokeResearchLLM: mocks.llm.invokeLLM,
+  chooseResearchModel: async () => {
+    const models = await mocks.llm.listLLMModels();
+    return models.data.find((model: { id: string }) => model.id === "gpt-5")?.id ?? models.data[0]?.id;
+  },
+}));
 vi.mock("./search", async importOriginal => ({ ...(await importOriginal<typeof import("./search")>()), ...mocks.search }));
 
 import { applyPlanAdaptation, isAiServiceLimitError, makePlanSteps, runResearchSession, shouldRequestClarification, toPublicResearchError } from "./agent";
@@ -73,6 +80,13 @@ describe("AI service limit recovery", () => {
 
     expect(isAiServiceLimitError(providerError)).toBe(true);
     expect(toPublicResearchError(providerError)).toBe("The AI service is temporarily unavailable. Your research workspace has been preserved and can be resumed.");
+  });
+
+  it("routes dual-provider outages into the existing preserved-work recovery message", () => {
+    const providerOutage = new Error("AI_PROVIDERS_UNAVAILABLE");
+
+    expect(isAiServiceLimitError(providerOutage)).toBe(true);
+    expect(toPublicResearchError(providerOutage)).toBe("The AI service is temporarily unavailable. Your research workspace has been preserved and can be resumed.");
   });
 });
 
@@ -248,6 +262,28 @@ describe("runResearchSession adaptive-plan contract", () => {
 
     expect(mocks.db.updateResearchSessionForUser).toHaveBeenLastCalledWith(
       "session-limit",
+      1,
+      expect.objectContaining({
+        status: "failed",
+        errorMessage: "AI_SERVICE_LIMIT",
+        lifecyclePhase: "planning",
+        lifecycleProgress: 8,
+        lifecycleMessage: "Interpreting the research objective and choosing the right evidence format.",
+      })
+    );
+  });
+
+  it("preserves the research session when both LLM providers are unavailable", async () => {
+    vi.clearAllMocks();
+    mocks.db.getResearchSessionForUser.mockResolvedValue({ id: "session-dual-outage", query: "Research a topic", status: "draft" });
+    mocks.db.listResearchSteps.mockResolvedValue([]);
+    mocks.llm.listLLMModels.mockReset().mockResolvedValue({ data: [{ id: "gpt-5" }] });
+    mocks.llm.invokeLLM.mockReset().mockRejectedValueOnce(new Error("AI_PROVIDERS_UNAVAILABLE"));
+
+    await runResearchSession({ sessionId: "session-dual-outage", userId: 1, emit: vi.fn() });
+
+    expect(mocks.db.updateResearchSessionForUser).toHaveBeenLastCalledWith(
+      "session-dual-outage",
       1,
       expect.objectContaining({
         status: "failed",
