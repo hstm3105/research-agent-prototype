@@ -97,3 +97,10 @@
 - [x] Resolve the stale provider-attempt runtime import mismatch and confirm a clean server/browser reload with no module-export errors.
 - [x] Add rendered coverage for an initial session-history transport failure with a visible retry that recovers the workspace.
 - [x] Re-verify independent workspace API requests after the runtime cleanup and confirm logs contain no new failed-fetch errors.
+- [x] Audit the “Cute and Aesthetic Cafes in Jaipur” session to identify why source retrieval yielded only one non-comparable recommendation.
+- [x] Detect recommendation and shortlist intents, explicitly derive decision criteria, target a minimum diverse option set, and flag insufficient evidence rather than overclaiming.
+- [x] Extract structured, per-option facts from retained sources and synthesize a ranked comparison with source-linked evidence, trade-offs, and an actionable recommendation.
+- [ ] Validate a live repaired café shortlist with Gemini Google Search grounding once the configured API project has available search-grounding quota; regression quality gates are complete.
+- [x] Define and validate a typed recommendation contract covering ranked options, decision criteria, source-linked evidence, caveats, and an actionable selection recommendation.
+- [x] Persist extracted per-option recommendation facts and citations, then render a structured comparison shortlist rather than relying exclusively on freeform final Markdown.
+- [ ] Validate the typed grounded multi-option Jaipur café shortlist end to end when Gemini Search-grounding quota is available.

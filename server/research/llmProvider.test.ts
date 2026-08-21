@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { chooseResearchModel, GEMINI_RESEARCH_MODELS, invokeResearchLLM, providerAttemptsFromError } from "./llmProvider";
+import { chooseResearchModel, GEMINI_RESEARCH_MODELS, invokeGroundedRecommendationResearch, invokeResearchLLM, providerAttemptsFromError } from "./llmProvider";
 
 const originalFetch = global.fetch;
 const originalApiKey = process.env.GEMINI_API_KEY;
@@ -59,5 +59,21 @@ describe("Gemini research provider", () => {
       { provider: "gemini", model: "gemini-3.5-flash-lite", outcome: "failed", errorClass: "http_503", httpStatus: 503 },
       { provider: "gemini", model: "gemini-3.1-flash-lite", outcome: "failed", errorClass: "http_503", httpStatus: 503 },
     ]);
+  });
+
+  it("uses Gemini Google Search grounding and retains citation sources for recommendation research", async () => {
+    process.env.GEMINI_API_KEY = "test-key";
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      output_text: "{\"criteria\":[\"atmosphere\"],\"options\":[]}",
+      steps: [{ type: "model_output", content: [{ type: "text", text: "{\"criteria\":[\"atmosphere\"],\"options\":[]}", annotations: [{ type: "url_citation", title: "Cafe guide", url: "https://example.org/cafes", start_index: 0, end_index: 20 }] }] }],
+    }), { status: 200 })) as typeof fetch;
+
+    const result = await invokeGroundedRecommendationResearch({ request: "Find aesthetic cafes in Jaipur." });
+
+    const [url, init] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe("https://generativelanguage.googleapis.com/v1beta/interactions");
+    expect(JSON.parse(init.body)).toMatchObject({ model: "gemini-3.5-flash-lite", tools: [{ type: "google_search" }] });
+    expect(result.output).toContain("\"criteria\"");
+    expect(result.sources).toEqual([expect.objectContaining({ title: "Cafe guide", url: "https://example.org/cafes" })]);
   });
 });

@@ -2,6 +2,7 @@ import { nanoid } from "nanoid";
 import {
   addResearchCitations,
   addResearchFindings,
+  replaceResearchRecommendationOptions,
   addResearchStep,
   addResearchSources,
   getResearchSessionForUser,
@@ -15,9 +16,9 @@ import {
   updateResearchStepDetails,
 } from "../db";
 import { searchPublicWeb } from "./search";
-import { chooseResearchModel, invokeResearchLLM, providerAttemptsFromError } from "./llmProvider";
+import { chooseResearchModel, invokeGroundedRecommendationResearch, invokeResearchLLM, providerAttemptsFromError, renderGroundedRecommendationMarkdown, type GroundedRecommendationSource } from "./llmProvider";
 import { scoreResearchSource } from "./sourceQuality";
-import type { AgentFinding, ResearchIntent, ResearchPlanStep, ResearchProgressEvent } from "./types";
+import type { AgentFinding, RecommendationBrief, RecommendationEvidence, RecommendationOption, ResearchIntent, ResearchPlanStep, ResearchProgressEvent } from "./types";
 
 const outputFormatValues = ["report", "summary", "comparison", "timeline", "qa"] as const;
 
@@ -118,6 +119,10 @@ export function shouldRequestClarification(query: string, intent: Pick<ResearchI
   return materiallyConstrained || normalizedQuery.trim().split(/\s+/).length < 4;
 }
 
+export function isRecommendationResearch(intent: Pick<ResearchIntent, "title" | "intent" | "researchGoal">) {
+  return /\b(recommend|recommendation|shortlist|best\s+(?:cafes?|restaurants?|hotels?|places?|shops?|products?)|list\s+of|cafes?|restaurants?|hotels?|itinerary|where\s+to\s+(?:eat|stay|go)|aesthetic|cute)\b/i.test(`${intent.title} ${intent.intent} ${intent.researchGoal}`);
+}
+
 export function makePlanSteps(intent: ResearchIntent, researchDepth: "quick" | "standard" | "deep"): ResearchPlanStep[] {
   const planLength = researchDepth === "quick" ? 2 : researchDepth === "deep" ? 5 : 3;
   return intent.plan.slice(0, planLength).map((step, ordinal) => ({ ...step, id: nanoid(), ordinal }));
@@ -199,11 +204,61 @@ function buildEvidenceDigest(intent: ResearchIntent, sources: Array<{ title: str
   return `## Answer\n\nThe research run retained directly attributable public evidence relevant to the question. A model-written synthesis was unavailable, so the evidence below is presented without extrapolating beyond the source excerpts.\n\n## Evidence collected\n\n${sourceLinks || "No attributable source excerpts were retained."}\n\n## Practical interpretation\n\nUse the linked source material to verify the underlying claims and decide whether the available evidence is sufficient for the requested conclusion.`;
 }
 
-export async function synthesizeResearchOutput(input: {
+function recommendationText(value: unknown, maxLength: number) {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim().slice(0, maxLength) : null;
+}
+
+function parseGroundedRecommendationBrief(value: string, groundedSources: GroundedRecommendationSource[]): RecommendationBrief | null {
+  try {
+    const parsed = parseJson<Partial<RecommendationBrief>>(value);
+    const validUrls = new Set(groundedSources.map(source => source.url));
+    const criteria = Array.isArray(parsed.criteria)
+      ? parsed.criteria.map(item => recommendationText(item, 160)).filter((item): item is string => Boolean(item)).slice(0, 6)
+      : [];
+    const rawOptions = Array.isArray(parsed.options) ? parsed.options : [];
+    const options = rawOptions.map((raw, index): RecommendationOption | null => {
+      if (!raw || typeof raw !== "object") return null;
+      const candidate = raw as Partial<RecommendationOption>;
+      const rank = Number.isInteger(candidate.rank) && Number(candidate.rank) > 0 ? Number(candidate.rank) : index + 1;
+      const name = recommendationText(candidate.name, 160);
+      const summary = recommendationText(candidate.summary, 500);
+      const strengths = Array.isArray(candidate.strengths) ? candidate.strengths.map(item => recommendationText(item, 280)).filter((item): item is string => Boolean(item)).slice(0, 4) : [];
+      const caveats = Array.isArray(candidate.caveats) ? candidate.caveats.map(item => recommendationText(item, 280)).filter((item): item is string => Boolean(item)).slice(0, 4) : [];
+      const evidence = (Array.isArray(candidate.evidence) ? candidate.evidence : []).map((item): RecommendationEvidence | null => {
+        if (!item || typeof item !== "object") return null;
+        const evidenceItem = item as Partial<RecommendationEvidence>;
+        const claim = recommendationText(evidenceItem.claim, 420);
+        const sourceUrls = Array.isArray(evidenceItem.sourceUrls)
+          ? Array.from(new Set(evidenceItem.sourceUrls.filter((url): url is string => typeof url === "string" && validUrls.has(url))))
+          : [];
+        return claim && sourceUrls.length ? { claim, sourceUrls } : null;
+      }).filter((item): item is RecommendationEvidence => Boolean(item)).slice(0, 4);
+      return name && summary && strengths.length && evidence.length ? { rank, name, summary, strengths, caveats, evidence } : null;
+    }).filter((item): item is RecommendationOption => Boolean(item)).sort((a, b) => a.rank - b.rank);
+    const uniqueNames = new Set(options.map(option => option.name.toLocaleLowerCase()));
+    const selectionAdvice = recommendationText(parsed.selectionAdvice, 700);
+    if (criteria.length < 2 || options.length < 3 || uniqueNames.size < 3 || !selectionAdvice) return null;
+    return { criteria, options: options.map((option, index) => ({ ...option, rank: index + 1 })), selectionAdvice };
+  } catch {
+    return null;
+  }
+}
+
+function renderStructuredRecommendationMarkdown(brief: RecommendationBrief, sources: GroundedRecommendationSource[]) {
+  const options = brief.options.map(option => {
+    const strengths = option.strengths.map(strength => `- ${strength}`).join("\n");
+    const caveats = option.caveats.length ? option.caveats.map(caveat => `- ${caveat}`).join("\n") : "- No material caveat was verified in the retained evidence.";
+    const evidence = option.evidence.map(item => `- ${item.claim} ${item.sourceUrls.map(url => `[Source](${url})`).join(" ")}`).join("\n");
+    return `### ${option.rank}. ${option.name}\n\n${option.summary}\n\n**Why it fits**\n${strengths}\n\n**Evidence**\n${evidence}\n\n**Caveats**\n${caveats}`;
+  }).join("\n\n");
+  return renderGroundedRecommendationMarkdown(`## Recommended shortlist\n\n**Decision criteria:** ${brief.criteria.join(" · ")}\n\n${options}\n\n## How to choose\n\n${brief.selectionAdvice}\n\n## Evidence caveats\n\nThis shortlist includes only options with attributable Google Search grounding. Availability, hours, pricing, and venue conditions can change; verify the linked source material before acting.`, sources);
+}
+
+export async function synthesizeResearchBrief(input: {
   intent: ResearchIntent;
   findings: Array<{ title: string; claim: string; evidence: string; citationSourceIdsJson: string }>;
   sources: Array<{ id: string; title: string; url: string; publisher: string | null; excerpt: string | null }>;
-}): Promise<string> {
+}): Promise<{ output: string; groundedSources: GroundedRecommendationSource[]; recommendation?: RecommendationBrief }> {
   const sourceMap = new Map(input.sources.map(source => [source.id, source]));
   const findings = input.findings.slice(0, 10).map(finding => ({
     title: finding.title,
@@ -218,6 +273,22 @@ export async function synthesizeResearchOutput(input: {
     })(),
   }));
   const sources = Array.from(new Map(input.sources.map(source => [source.url, source])).values()).slice(0, 10).map(source => ({ title: source.title, url: source.url, publisher: source.publisher, excerpt: source.excerpt }));
+  if (isRecommendationResearch(input.intent)) {
+    let groundingUnavailable = false;
+    try {
+      const grounded = await invokeGroundedRecommendationResearch({
+        request: `Act as a senior research IC delivering a decision-ready local recommendation brief. Request: ${input.intent.researchGoal}\n\nUse Google Search to find a diverse shortlist of at least three distinct, publicly verifiable named options when the evidence supports it. First infer the real decision criteria from the request. For each option, extract only source-supported details for atmosphere or design cue, area or location context when available, food/drink or experience focus, best use case, and caveats. Do not repeat the same venue, do not substitute generic categories for named options, and do not invent venue details. If fewer than three distinct named options are verifiable, return an empty options list.\n\nReturn ONLY valid JSON with this exact shape: {"criteria":["criterion"],"options":[{"rank":1,"name":"option name","summary":"one sentence","strengths":["source-supported strength"],"caveats":["source-supported caveat or qualified uncertainty"],"evidence":[{"claim":"specific source-supported fact","sourceUrls":["exact grounded citation URL"]}]}],"selectionAdvice":"how to choose among the options"}. Include at least two criteria, three options, one strength, and one source-linked evidence item for each option. In sourceUrls, use only the exact URLs provided by Google Search grounding.`,
+      });
+      const recommendation = grounded.sources.length >= 3 ? parseGroundedRecommendationBrief(grounded.output, grounded.sources) : null;
+      if (recommendation) return { output: renderStructuredRecommendationMarkdown(recommendation, grounded.sources), groundedSources: grounded.sources, recommendation };
+    } catch {
+      groundingUnavailable = true;
+    }
+    return {
+      output: `## Recommendation evidence gap\n\n${groundingUnavailable ? "Grounded public-web search is temporarily unavailable, so ResearchOS cannot verify a diverse shortlist right now. " : "The grounded search response did not contain enough attributable, diverse evidence. "}The available public evidence retains ${sources.length} distinct source${sources.length === 1 ? "" : "s"}, which is not enough to responsibly rank a multi-option shortlist. ResearchOS will not turn a thin source set into a broad recommendation. Use **Broaden scope** to retry this brief when public-search capacity is available.\n\n${buildEvidenceDigest(input.intent, sources)}`,
+      groundedSources: [],
+    };
+  }
   try {
     const model = await chooseResearchModel();
     const response = await invokeResearchLLM({
@@ -229,11 +300,18 @@ export async function synthesizeResearchOutput(input: {
       ],
     });
     const output = String(response.choices[0]?.message.content || "").replace(/^```markdown\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/, "").trim();
-    if (output.length >= 180) return output;
+    if (output.length >= 180) return { output, groundedSources: [] };
   } catch {
     // The deterministic digest below keeps the completed workspace useful if final synthesis is temporarily unavailable.
   }
-  return buildEvidenceDigest(input.intent, sources);
+  const fallback = isRecommendationResearch(input.intent)
+    ? `## Recommendation evidence gap\n\nThe available public evidence does not verify enough distinct named options for a defensible shortlist. Rather than overstate a single recommendation, this brief preserves the directly linked evidence below and recommends a broader retrieval pass.\n\n${buildEvidenceDigest(input.intent, sources)}`
+    : buildEvidenceDigest(input.intent, sources);
+  return { output: fallback, groundedSources: [] };
+}
+
+export async function synthesizeResearchOutput(input: Parameters<typeof synthesizeResearchBrief>[0]): Promise<string> {
+  return (await synthesizeResearchBrief(input)).output;
 }
 
 function buildFinalOutput(intent: ResearchIntent, findingCount: number): string {
@@ -351,6 +429,8 @@ export async function runResearchSession(input: {
     }
 
     const existingFindings = isResuming ? await listResearchFindings(session.id) : [];
+    const existingSources = isResuming ? await listResearchSources(session.id) : [];
+    const seenSourceUrls = new Set(existingSources.map(source => source.url));
     let findingOrdinal = existingFindings.length;
     let adaptationCount = 0;
     for (const step of plan) {
@@ -358,13 +438,18 @@ export async function runResearchSession(input: {
       emit(input.emit, { type: "step", sessionId: session.id, stepId: step.id, status: "active", title: step.title });
       emit(input.emit, { type: "activity", sessionId: session.id, phase: "discovery", message: `Searching public sources for: ${step.title}.`, progress: 28 + Math.round((step.ordinal / Math.max(plan.length, 1)) * 45) });
       const webSources = await searchPublicWeb(step.searchQuery);
-      if (!webSources.length) {
+      const novelWebSources = webSources.filter(source => {
+        if (seenSourceUrls.has(source.url)) return false;
+        seenSourceUrls.add(source.url);
+        return true;
+      });
+      if (!novelWebSources.length) {
         await updateResearchStep(step.id, { status: "skipped", completedAt: new Date() });
-        emit(input.emit, { type: "activity", sessionId: session.id, phase: "discovery", message: `No attributable sources were returned for ${step.title}. Skipping this narrow step and continuing the broader research plan.`, progress: 33 + Math.round(((step.ordinal + 1) / Math.max(plan.length, 1)) * 42) });
+        emit(input.emit, { type: "activity", sessionId: session.id, phase: "discovery", message: webSources.length ? `The search returned only sources already captured by earlier steps. Skipping duplicate evidence and continuing the broader plan.` : `No attributable sources were returned for ${step.title}. Skipping this narrow step and continuing the broader research plan.`, progress: 33 + Math.round(((step.ordinal + 1) / Math.max(plan.length, 1)) * 42) });
         emit(input.emit, { type: "step", sessionId: session.id, stepId: step.id, status: "skipped", title: step.title });
         continue;
       }
-      const persistedSources = webSources.map(source => {
+      const persistedSources = novelWebSources.map(source => {
         const quality = scoreResearchSource(source, step.searchQuery);
         return {
           id: nanoid(),
@@ -482,10 +567,50 @@ export async function runResearchSession(input: {
 
     emit(input.emit, { type: "activity", sessionId: session.id, phase: "synthesis", message: "Synthesizing a decision-ready answer from the retained evidence.", progress: 92 });
     const [completedFindings, completedSources] = await Promise.all([listResearchFindings(session.id), listResearchSources(session.id)]);
-    const finalOutput = await synthesizeResearchOutput({ intent, findings: completedFindings, sources: completedSources });
+    const finalBrief = await synthesizeResearchBrief({ intent, findings: completedFindings, sources: completedSources });
+    const knownUrls = new Set(completedSources.map(source => source.url));
+    const newGroundedSources = finalBrief.groundedSources.filter(source => !knownUrls.has(source.url));
+    const persistedGroundedSources = newGroundedSources.map(source => ({
+      id: nanoid(),
+      sessionId: session.id,
+      stepId: plan.at(-1)?.id ?? null,
+      sourceType: "web" as const,
+      title: source.title,
+      url: source.url,
+      publisher: source.publisher,
+      excerpt: source.excerpt,
+      qualityScore: 88,
+      qualitySignalsJson: JSON.stringify(["Gemini Google Search grounded citation"]),
+      citationCount: 1,
+    }));
+    if (newGroundedSources.length) {
+      await addResearchSources(persistedGroundedSources);
+    }
+    const recommendation = finalBrief.recommendation;
+    if (recommendation) {
+      const sourceIdByUrl = new Map([...completedSources, ...persistedGroundedSources].map(source => [source.url, source.id]));
+      await replaceResearchRecommendationOptions(session.id, recommendation.options.map(option => {
+        const citationSourceIds = Array.from(new Set(option.evidence.flatMap(item =>
+          item.sourceUrls.map(url => sourceIdByUrl.get(url)).filter((id): id is string => Boolean(id))
+        )));
+        return {
+          id: nanoid(),
+          sessionId: session.id,
+          rank: option.rank,
+          name: option.name,
+          summary: option.summary,
+          strengthsJson: JSON.stringify(option.strengths),
+          caveatsJson: JSON.stringify(option.caveats),
+          evidenceJson: JSON.stringify(option.evidence),
+          citationSourceIdsJson: JSON.stringify(citationSourceIds),
+          criteriaJson: JSON.stringify(recommendation.criteria),
+          selectionAdvice: recommendation.selectionAdvice,
+        };
+      }));
+    }
     await updateResearchSessionForUser(session.id, input.userId, {
       status: "complete",
-      finalOutput,
+      finalOutput: finalBrief.output,
       completedAt: new Date(),
     });
     emit(input.emit, { type: "activity", sessionId: session.id, phase: "synthesis", message: "Research complete. Your cited brief is ready.", progress: 100 });

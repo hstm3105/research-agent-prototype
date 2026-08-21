@@ -98,6 +98,23 @@ export const researchCitations = mysqlTable("researchCitations", {
   index("researchCitations_source_idx").on(table.sourceId),
 ]);
 
+export const researchRecommendationOptions = mysqlTable("researchRecommendationOptions", {
+  id: varchar("id", { length: 48 }).primaryKey(),
+  sessionId: varchar("sessionId", { length: 48 }).notNull().references(() => researchSessions.id, { onDelete: "cascade" }),
+  rank: int("rank").notNull(),
+  name: varchar("name", { length: 255 }).notNull(),
+  summary: text("summary").notNull(),
+  strengthsJson: text("strengthsJson").notNull(),
+  caveatsJson: text("caveatsJson").notNull(),
+  evidenceJson: text("evidenceJson").notNull(),
+  citationSourceIdsJson: text("citationSourceIdsJson").notNull(),
+  criteriaJson: text("criteriaJson").notNull(),
+  selectionAdvice: text("selectionAdvice").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [
+  index("researchRecommendationOptions_session_rank_idx").on(table.sessionId, table.rank),
+]);
+
 export const researchExports = mysqlTable("researchExports", {
   id: varchar("id", { length: 48 }).primaryKey(),
   sessionId: varchar("sessionId", { length: 48 }).notNull().references(() => researchSessions.id, { onDelete: "cascade" }),
@@ -126,5 +143,6 @@ export type ResearchStep = typeof researchSteps.$inferSelect;
 export type ResearchSource = typeof researchSources.$inferSelect;
 export type ResearchFinding = typeof researchFindings.$inferSelect;
 export type ResearchCitation = typeof researchCitations.$inferSelect;
+export type ResearchRecommendationOption = typeof researchRecommendationOptions.$inferSelect;
 export type ResearchExport = typeof researchExports.$inferSelect;
 export type ResearchShareLink = typeof researchShareLinks.$inferSelect;

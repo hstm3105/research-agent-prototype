@@ -9,6 +9,7 @@ import {
   listResearchCitations,
   listResearchExports,
   listResearchFindings,
+  listResearchRecommendationOptions,
   listResearchShareLinksForUser,
   listResearchSessionsForUser,
   listResearchSources,
@@ -28,13 +29,14 @@ function hashShareToken(token: string) {
 }
 
 async function getResearchBundle(sessionId: string) {
-  const [steps, sources, findings] = await Promise.all([
+  const [steps, sources, findings, recommendationOptions] = await Promise.all([
     listResearchSteps(sessionId),
     listResearchSources(sessionId),
     listResearchFindings(sessionId),
+    listResearchRecommendationOptions(sessionId),
   ]);
   const citations = await listResearchCitations(findings.map(finding => finding.id));
-  return { steps, sources, findings, citations };
+  return { steps, sources, findings, citations, recommendationOptions };
 }
 
 export const researchRouter = router({
@@ -46,12 +48,12 @@ export const researchRouter = router({
   get: protectedProcedure.input(sessionSchema).query(async ({ ctx, input }) => {
     const session = await getResearchSessionForUser(input.sessionId, ctx.user.id);
     if (!session) return null;
-    const [{ steps, sources, findings, citations }, exports, shareLinks] = await Promise.all([
+    const [{ steps, sources, findings, citations, recommendationOptions }, exports, shareLinks] = await Promise.all([
       getResearchBundle(session.id),
       listResearchExports(session.id),
       listResearchShareLinksForUser(session.id, ctx.user.id),
     ]);
-    return { session, steps, sources, findings, citations, exports, shareLinks };
+    return { session, steps, sources, findings, citations, recommendationOptions, exports, shareLinks };
   }),
   clarify: protectedProcedure.input(z.object({ sessionId: z.string().min(6).max(64), answer: z.string().trim().min(2).max(4_000) })).mutation(async ({ ctx, input }) => {
     const session = await getResearchSessionForUser(input.sessionId, ctx.user.id);

@@ -37,6 +37,26 @@ export type AgentFinding = {
   sourceUrls: string[];
 };
 
+export type RecommendationEvidence = {
+  claim: string;
+  sourceUrls: string[];
+};
+
+export type RecommendationOption = {
+  rank: number;
+  name: string;
+  summary: string;
+  strengths: string[];
+  caveats: string[];
+  evidence: RecommendationEvidence[];
+};
+
+export type RecommendationBrief = {
+  criteria: string[];
+  options: RecommendationOption[];
+  selectionAdvice: string;
+};
+
 export type ResearchProgressEvent =
   | { type: "connected"; sessionId: string }
   | { type: "activity"; sessionId: string; phase: "planning" | "discovery" | "analysis" | "synthesis"; message: string; progress: number }

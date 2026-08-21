@@ -8,6 +8,7 @@ const db = vi.hoisted(() => ({
   listResearchCitations: vi.fn(),
   listResearchExports: vi.fn(),
   listResearchFindings: vi.fn(),
+  listResearchRecommendationOptions: vi.fn(),
   listResearchShareLinksForUser: vi.fn(),
   listResearchSessionsForUser: vi.fn(),
   listResearchSources: vi.fn(),
@@ -26,6 +27,7 @@ describe("researchRouter.get", () => {
     db.listResearchSteps.mockResolvedValue([]);
     db.listResearchSources.mockResolvedValue([]);
     db.listResearchFindings.mockResolvedValue([]);
+    db.listResearchRecommendationOptions.mockResolvedValue([]);
     db.listResearchExports.mockResolvedValue([]);
     db.listResearchCitations.mockResolvedValue([]);
     db.listResearchShareLinksForUser.mockResolvedValue([]);
@@ -36,6 +38,7 @@ describe("researchRouter.get", () => {
     expect(result?.session.id).toBe("session-123");
     expect(db.getResearchSessionForUser).toHaveBeenCalledWith("session-123", 42);
     expect(db.listResearchCitations).toHaveBeenCalledWith([]);
+    expect(result?.recommendationOptions).toEqual([]);
   });
 });
 
@@ -85,6 +88,7 @@ describe("researchRouter extensions", () => {
     db.listResearchSteps.mockResolvedValue([]);
     db.listResearchSources.mockResolvedValue([]);
     db.listResearchFindings.mockResolvedValue([]);
+    db.listResearchRecommendationOptions.mockResolvedValue([]);
     db.listResearchCitations.mockResolvedValue([]);
     const caller = researchRouter.createCaller({ user: null } as never);
 

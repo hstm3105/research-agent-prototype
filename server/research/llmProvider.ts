@@ -11,6 +11,13 @@ export type GeminiProviderAttempt = {
   httpStatus?: number;
 };
 
+export type GroundedRecommendationSource = {
+  title: string;
+  url: string;
+  publisher: string | null;
+  excerpt: string | null;
+};
+
 export class ResearchProviderUnavailableError extends Error {
   constructor(readonly attempts: GeminiProviderAttempt[]) {
     super("AI_PROVIDERS_UNAVAILABLE");
@@ -75,6 +82,35 @@ type GeminiResponse = {
   usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number };
 };
 
+type GroundingAnnotation = { type?: string; url?: string; title?: string };
+type GroundedInteractionResponse = {
+  output_text?: string;
+  steps?: Array<{ type?: string; content?: Array<{ type?: string; text?: string; annotations?: GroundingAnnotation[] }> }>;
+};
+
+function groundedSourcesFromPayload(payload: GroundedInteractionResponse): GroundedRecommendationSource[] {
+  const annotations = payload.steps?.flatMap(step => step.content?.flatMap(content => content.annotations ?? []) ?? []) ?? [];
+  const byUrl = new Map<string, GroundedRecommendationSource>();
+  for (const annotation of annotations) {
+    if (annotation.type && annotation.type !== "url_citation") continue;
+    if (!annotation.url || !/^https?:\/\//i.test(annotation.url)) continue;
+    let publisher: string | null = null;
+    try { publisher = new URL(annotation.url).hostname.replace(/^www\./, ""); } catch { /* invalid citations are ignored */ }
+    byUrl.set(annotation.url, {
+      title: (annotation.title || publisher || "Grounded web source").slice(0, 500),
+      url: annotation.url,
+      publisher,
+      excerpt: "Gemini Google Search grounding citation retained for this recommendation brief.",
+    });
+  }
+  return Array.from(byUrl.values());
+}
+
+export function renderGroundedRecommendationMarkdown(text: string, sources: GroundedRecommendationSource[]): string {
+  const sourceList = sources.map(source => `- [${source.title}](${source.url})`).join("\n");
+  return sourceList ? `${text.trim()}\n\n### Grounded sources\n${sourceList}` : text.trim();
+}
+
 export async function chooseResearchModel() {
   return GEMINI_RESEARCH_MODELS[0];
 }
@@ -106,6 +142,31 @@ export async function invokeGemini(params: InvokeParams, model: string): Promise
       total_tokens: payload.usageMetadata.totalTokenCount ?? 0,
     } : undefined,
   };
+}
+
+/** Uses Gemini Google Search grounding to widen public-web evidence for local recommendations and shortlists. */
+export async function invokeGroundedRecommendationResearch(input: { request: string }): Promise<{ output: string; sources: GroundedRecommendationSource[] }> {
+  const apiKey = geminiApiKey();
+  if (!apiKey) throw new Error("GEMINI_API_KEY is not configured");
+  const attempts: GeminiProviderAttempt[] = [];
+  for (const model of GEMINI_RESEARCH_MODELS) {
+    try {
+      const response = await fetch(`${GEMINI_BASE_URL}/interactions`, {
+        method: "POST",
+        headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
+        body: JSON.stringify({ model, input: input.request, tools: [{ type: "google_search" }] }),
+      });
+      if (!response.ok) throw new Error(`Gemini invoke failed: ${response.status} ${response.statusText} – ${await response.text()}`);
+      const payload = await response.json() as GroundedInteractionResponse;
+      const rawOutput = payload.output_text || payload.steps?.flatMap(step => step.content ?? []).filter(content => content.type === "text").map(content => content.text || "").join("\n") || "";
+      if (!rawOutput.trim()) throw new Error("Gemini returned an empty grounded response");
+      const sources = groundedSourcesFromPayload(payload);
+      return { output: rawOutput.trim(), sources };
+    } catch (error) {
+      attempts.push(toAttempt(model, error));
+    }
+  }
+  throw new ResearchProviderUnavailableError(attempts);
 }
 
 function toAttempt(model: string, error: unknown): GeminiProviderAttempt {

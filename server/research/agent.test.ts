@@ -10,13 +10,14 @@ const mocks = vi.hoisted(() => ({
     listResearchFindings: vi.fn(),
     listResearchSources: vi.fn(),
     listResearchSteps: vi.fn(),
+    replaceResearchRecommendationOptions: vi.fn(),
     replaceResearchSteps: vi.fn(),
     updateResearchSessionForUser: vi.fn(),
     updateResearchSourceQuality: vi.fn(),
     updateResearchStep: vi.fn(),
     updateResearchStepDetails: vi.fn(),
   },
-  llm: { invokeLLM: vi.fn(), listLLMModels: vi.fn() },
+  llm: { invokeLLM: vi.fn(), invokeGrounded: vi.fn(), listLLMModels: vi.fn() },
   search: { searchPublicWeb: vi.fn() },
 }));
 
@@ -24,6 +25,8 @@ vi.mock("../db", () => mocks.db);
 vi.mock("../_core/llm", () => mocks.llm);
 vi.mock("./llmProvider", () => ({
   invokeResearchLLM: mocks.llm.invokeLLM,
+  invokeGroundedRecommendationResearch: mocks.llm.invokeGrounded,
+  renderGroundedRecommendationMarkdown: (text: string, sources: Array<{ title: string; url: string }>) => `${text}\n${sources.map(source => source.url).join("\n")}`,
   providerAttemptsFromError: (error: unknown) => error && typeof error === "object" && "attempts" in error ? (error as { attempts: unknown[] }).attempts : [],
   chooseResearchModel: async () => {
     const models = await mocks.llm.listLLMModels();
@@ -32,7 +35,7 @@ vi.mock("./llmProvider", () => ({
 }));
 vi.mock("./search", async importOriginal => ({ ...(await importOriginal<typeof import("./search")>()), ...mocks.search }));
 
-import { applyPlanAdaptation, isAiServiceLimitError, makePlanSteps, runResearchSession, shouldRequestClarification, synthesizeResearchOutput, toPublicResearchError } from "./agent";
+import { applyPlanAdaptation, isAiServiceLimitError, isRecommendationResearch, makePlanSteps, runResearchSession, shouldRequestClarification, synthesizeResearchBrief, synthesizeResearchOutput, toPublicResearchError } from "./agent";
 import { normalizeSearchPayload } from "./search";
 
 describe("normalizeSearchPayload", () => {
@@ -251,7 +254,7 @@ describe("runResearchSession adaptive-plan contract", () => {
     mocks.db.getResearchSessionForUser.mockResolvedValue({ id: "session-2", query: "Explain a narrow topic", status: "draft" });
     mocks.llm.listLLMModels.mockResolvedValue({ data: [{ id: "gpt-5" }] });
     mocks.search.searchPublicWeb.mockResolvedValue([]);
-    mocks.llm.invokeLLM.mockResolvedValueOnce({ choices: [{ message: { content: JSON.stringify({
+    mocks.llm.invokeLLM.mockReset().mockResolvedValueOnce({ choices: [{ message: { content: JSON.stringify({
       title: "Narrow topic",
       intent: "Explain a narrow topic with evidence.",
       researchGoal: "Explain the requested topic.",
@@ -295,6 +298,80 @@ describe("runResearchSession adaptive-plan contract", () => {
     expect(mocks.db.addResearchFindings).toHaveBeenCalledWith(expect.arrayContaining([
       expect.objectContaining({ title: source.title, citationSourceIdsJson: expect.any(String) }),
     ]));
+  });
+
+  it("uses grounded evidence to produce a validated multi-option recommendation shortlist", async () => {
+    mocks.llm.invokeGrounded.mockResolvedValue({ output: JSON.stringify({ criteria: ["aesthetic atmosphere", "visit occasion"], options: [
+      { rank: 1, name: "Cafe One", summary: "Garden setting for a relaxed daytime visit.", strengths: ["Garden ambience"], caveats: ["Confirm current opening hours."], evidence: [{ claim: "The guide describes a garden setting.", sourceUrls: ["https://example.org/one"] }] },
+      { rank: 2, name: "Cafe Two", summary: "Heritage character for a more atmospheric stop.", strengths: ["Heritage interiors"], caveats: ["Verify current menu details."], evidence: [{ claim: "The review highlights heritage interiors.", sourceUrls: ["https://example.org/two"] }] },
+      { rank: 3, name: "Cafe Three", summary: "Coffee-focused option for a shorter visit.", strengths: ["Coffee focus"], caveats: ["Check seating availability."], evidence: [{ claim: "The source presents it as coffee-focused.", sourceUrls: ["https://example.org/three"] }] },
+    ], selectionAdvice: "Choose Cafe One for a relaxed daytime setting, Cafe Two for heritage character, or Cafe Three for a coffee-first visit." }), sources: [
+      { title: "Cafe One review", url: "https://example.org/one", publisher: "example.org", excerpt: "Grounded citation." },
+      { title: "Cafe Two review", url: "https://example.org/two", publisher: "example.org", excerpt: "Grounded citation." },
+      { title: "Cafe Three review", url: "https://example.org/three", publisher: "example.org", excerpt: "Grounded citation." },
+    ] });
+    const intent = { title: "Cute cafes", intent: "Recommend aesthetic cafes", researchGoal: "Find a shortlist of cute and aesthetic cafes in Jaipur.", requiresClarification: false, clarifyingQuestion: "", outputFormat: "comparison" as const, plan: [] };
+
+    const brief = await synthesizeResearchBrief({ intent, findings: [], sources: [] });
+
+    expect(isRecommendationResearch(intent)).toBe(true);
+    expect(brief.output).toContain("Cafe Three");
+    expect(brief.recommendation?.options).toHaveLength(3);
+    expect(brief.groundedSources).toHaveLength(3);
+    expect(mocks.llm.invokeGrounded).toHaveBeenCalledWith(expect.objectContaining({ request: expect.stringContaining("Return ONLY valid JSON") }));
+  });
+
+  it("persists each validated recommendation option with resolved source citations", async () => {
+    vi.clearAllMocks();
+    mocks.db.getResearchSessionForUser.mockResolvedValue({ id: "session-recommendation", query: "Find cute cafes in Jaipur", status: "draft", researchDepth: "standard" });
+    mocks.db.listResearchFindings.mockResolvedValue([]);
+    mocks.db.listResearchSources.mockResolvedValue([]);
+    mocks.db.listResearchSteps.mockResolvedValue([]);
+    mocks.llm.listLLMModels.mockResolvedValue({ data: [{ id: "gpt-5" }] });
+    mocks.search.searchPublicWeb.mockResolvedValue([source]);
+    mocks.llm.invokeLLM.mockReset()
+      .mockResolvedValueOnce({ choices: [{ message: { content: JSON.stringify({ title: "Cute cafes", intent: "Recommend cafes", researchGoal: "Find cute cafes in Jaipur.", requiresClarification: false, clarifyingQuestion: "", outputFormat: "comparison", plan: [{ title: "Venue evidence", description: "Find attributable venue evidence.", searchQuery: "cute cafes Jaipur" }] }) } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { content: JSON.stringify({ findings: [{ title: "Local source", claim: "A local source was retained.", evidence: "A source excerpt.", sourceUrls: [source.url] }] }) } }] });
+    mocks.llm.invokeGrounded.mockResolvedValue({ output: JSON.stringify({ criteria: ["aesthetic atmosphere", "visit occasion"], options: [
+      { rank: 1, name: "Cafe One", summary: "A garden-style daytime choice.", strengths: ["Garden ambience"], caveats: ["Confirm current hours."], evidence: [{ claim: "A guide identifies a garden setting.", sourceUrls: ["https://example.org/one"] }] },
+      { rank: 2, name: "Cafe Two", summary: "A heritage-style option.", strengths: ["Heritage interiors"], caveats: ["Confirm menu details."], evidence: [{ claim: "A review identifies heritage interiors.", sourceUrls: ["https://example.org/two"] }] },
+      { rank: 3, name: "Cafe Three", summary: "A coffee-first option.", strengths: ["Coffee focus"], caveats: ["Confirm seating availability."], evidence: [{ claim: "A review identifies a coffee focus.", sourceUrls: ["https://example.org/three"] }] },
+    ], selectionAdvice: "Choose by desired ambience and visit purpose." }), sources: [
+      { title: "Cafe One review", url: "https://example.org/one", publisher: "example.org", excerpt: "Grounded citation." },
+      { title: "Cafe Two review", url: "https://example.org/two", publisher: "example.org", excerpt: "Grounded citation." },
+      { title: "Cafe Three review", url: "https://example.org/three", publisher: "example.org", excerpt: "Grounded citation." },
+    ] });
+
+    await runResearchSession({ sessionId: "session-recommendation", userId: 1, emit: vi.fn() });
+
+    expect(mocks.db.replaceResearchRecommendationOptions).toHaveBeenCalledWith("session-recommendation", expect.arrayContaining([
+      expect.objectContaining({ rank: 1, name: "Cafe One", criteriaJson: expect.stringContaining("aesthetic atmosphere"), citationSourceIdsJson: expect.stringMatching(/^\[.+\]$/) }),
+      expect.objectContaining({ rank: 3, name: "Cafe Three" }),
+    ]));
+  });
+
+  it("flags a one-source recommendation as insufficient evidence instead of overclaiming", async () => {
+    mocks.llm.invokeGrounded.mockRejectedValueOnce(new Error("grounding unavailable"));
+    const intent = { title: "Cute cafes", intent: "Recommend aesthetic cafes", researchGoal: "Find a shortlist of cute and aesthetic cafes in Jaipur.", requiresClarification: false, clarifyingQuestion: "", outputFormat: "comparison" as const, plan: [] };
+
+    const brief = await synthesizeResearchBrief({ intent, findings: [], sources: [{ id: "source-1", title: "Single cafe video", url: "https://example.org/video", publisher: "Example", excerpt: "One option only." }] });
+
+    expect(brief.output).toContain("Recommendation evidence gap");
+    expect(brief.output).toContain("not enough to responsibly rank");
+  });
+
+  it("does not promote multiple thin snippets into an ungrounded ranked shortlist", async () => {
+    mocks.llm.invokeGrounded.mockRejectedValueOnce(new Error("grounding unavailable"));
+    const intent = { title: "Cute cafes", intent: "Recommend aesthetic cafes", researchGoal: "Find a shortlist of cute and aesthetic cafes in Jaipur.", requiresClarification: false, clarifyingQuestion: "", outputFormat: "comparison" as const, plan: [] };
+
+    const brief = await synthesizeResearchBrief({ intent, findings: [], sources: [
+      { id: "source-1", title: "Cafe video one", url: "https://example.org/one", publisher: "Example", excerpt: "A generic top-cafes video." },
+      { id: "source-2", title: "Cafe video two", url: "https://example.org/two", publisher: "Example", excerpt: "Another generic list." },
+      { id: "source-3", title: "Cafe video three", url: "https://example.org/three", publisher: "Example", excerpt: "A third general mention." },
+    ] });
+
+    expect(brief.output).toContain("Grounded public-web search is temporarily unavailable");
+    expect(brief.output).toContain("Recommendation evidence gap");
   });
 
   it("persists the actual last emitted activity when an AI limit interrupts planning", async () => {

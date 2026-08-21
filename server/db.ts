@@ -5,6 +5,7 @@ import {
   researchCitations,
   researchExports,
   researchFindings,
+  researchRecommendationOptions,
   researchShareLinks,
   researchSessions,
   researchSources,
@@ -169,6 +170,17 @@ export async function listResearchCitations(findingIds: string[]) {
   const db = await requireDb();
   if (!findingIds.length) return [];
   return db.select().from(researchCitations).where(inArray(researchCitations.findingId, findingIds));
+}
+
+export async function replaceResearchRecommendationOptions(sessionId: string, options: Array<typeof researchRecommendationOptions.$inferInsert>) {
+  const db = await requireDb();
+  await db.delete(researchRecommendationOptions).where(eq(researchRecommendationOptions.sessionId, sessionId));
+  if (options.length) await db.insert(researchRecommendationOptions).values(options);
+}
+
+export async function listResearchRecommendationOptions(sessionId: string) {
+  const db = await requireDb();
+  return db.select().from(researchRecommendationOptions).where(eq(researchRecommendationOptions.sessionId, sessionId)).orderBy(researchRecommendationOptions.rank);
 }
 
 export async function createResearchExport(input: typeof researchExports.$inferInsert) {
