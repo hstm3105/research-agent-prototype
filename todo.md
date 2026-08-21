@@ -85,3 +85,6 @@
 - [x] Verify a resumed failed session advances beyond planning on Gemini while provider outages still expose only the non-technical preserved-work recovery state.
 - [x] Persist non-secret Gemini provider-attempt telemetry, including model, error class or HTTP status, and fallback outcome, for exact future outage diagnosis.
 - [x] Add regression coverage that records provider diagnostics server-side while retaining the existing non-technical preserved-work user message.
+- [x] Diagnose completed sessions that retain sources but persist zero cited findings and therefore show no result body.
+- [x] Ensure every completed research session renders a useful, clearly labeled source-backed result when structured findings are empty or cannot be attributed.
+- [x] Repair the affected completed session and add server plus rendered-workspace regression coverage for visible completed output.

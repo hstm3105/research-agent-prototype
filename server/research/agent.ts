@@ -393,10 +393,19 @@ export async function runResearchSession(input: {
         result = { findings: sourceFallbackFindings(persistedSources) };
       }
       const sourceByUrl = new Map(persistedSources.map(source => [source.url, source]));
-      const safeFindings = result.findings
+      const attributedFindings = result.findings
         .map(finding => ({ ...finding, citationSourceIds: Array.from(new Set(finding.sourceUrls.map(url => sourceByUrl.get(url)?.id).filter((id): id is string => Boolean(id)))) }))
         .filter(finding => finding.citationSourceIds.length > 0)
         .slice(0, 4);
+      const safeFindings = attributedFindings.length > 0
+        ? attributedFindings
+        : sourceFallbackFindings(persistedSources).map(finding => ({
+          ...finding,
+          citationSourceIds: Array.from(new Set(finding.sourceUrls.map(url => sourceByUrl.get(url)?.id).filter((id): id is string => Boolean(id)))),
+        })).filter(finding => finding.citationSourceIds.length > 0);
+      if (!attributedFindings.length && safeFindings.length) {
+        emit(input.emit, { type: "activity", sessionId: session.id, phase: "analysis", message: "The model returned no directly attributable claims. Preserving source-backed excerpts as the completed brief instead.", progress: 42 + Math.round((step.ordinal / Math.max(plan.length, 1)) * 45) });
+      }
       const persistedFindings = safeFindings.map(finding => ({
         id: nanoid(),
         sessionId: session.id,

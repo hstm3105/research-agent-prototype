@@ -252,6 +252,31 @@ describe("runResearchSession adaptive-plan contract", () => {
     expect(mocks.db.updateResearchSessionForUser).toHaveBeenCalledWith("session-2", 1, expect.objectContaining({ status: "complete" }));
   });
 
+  it("persists source-backed fallback findings when model claims cannot be matched to retained sources", async () => {
+    vi.clearAllMocks();
+    mocks.db.getResearchSessionForUser.mockResolvedValue({ id: "session-source-fallback", query: "Summarize the evidence", status: "draft" });
+    mocks.db.listResearchSteps.mockResolvedValue([]);
+    mocks.llm.listLLMModels.mockResolvedValue({ data: [{ id: "gpt-5" }] });
+    mocks.search.searchPublicWeb.mockResolvedValue([source]);
+    mocks.llm.invokeLLM.mockReset()
+      .mockResolvedValueOnce({ choices: [{ message: { content: JSON.stringify({
+        title: "Source-backed brief",
+        intent: "Summarize retained evidence.",
+        researchGoal: "Produce a source-backed summary.",
+        requiresClarification: false,
+        clarifyingQuestion: "",
+        outputFormat: "summary",
+        plan: [{ title: "Evidence check", description: "Collect attributable evidence.", searchQuery: "evidence" }],
+      }) } }] })
+      .mockResolvedValueOnce({ choices: [{ message: { content: JSON.stringify({ findings: [{ title: "Unmatched claim", claim: "This URL is not retained.", evidence: "Unsupported.", sourceUrls: ["https://other.example/unmatched"] }] }) } }] });
+
+    await runResearchSession({ sessionId: "session-source-fallback", userId: 1, emit: vi.fn() });
+
+    expect(mocks.db.addResearchFindings).toHaveBeenCalledWith(expect.arrayContaining([
+      expect.objectContaining({ title: source.title, citationSourceIdsJson: expect.any(String) }),
+    ]));
+  });
+
   it("persists the actual last emitted activity when an AI limit interrupts planning", async () => {
     vi.clearAllMocks();
     mocks.db.getResearchSessionForUser.mockResolvedValue({ id: "session-limit", query: "Research a topic", status: "draft" });

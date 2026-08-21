@@ -12,6 +12,7 @@ const mocks = vi.hoisted(() => ({
   createShare: vi.fn().mockResolvedValue({ id: "share-1", token: "secure-shared-brief-token-1234567890" }),
   revokeShare: vi.fn().mockResolvedValue({ id: "active-share", revoked: true }),
   completedMode: false,
+  emptyFindingMode: false,
   limitMode: false,
 }));
 
@@ -27,7 +28,7 @@ vi.mock("@/lib/trpc", () => ({
     useUtils: () => ({ research: { get: { invalidate: mocks.invalidateGet }, list: { invalidate: mocks.invalidateList } } }),
     research: {
       list: { useQuery: () => ({ data: [{ id: "session-live", title: "Active brief", status: mocks.completedMode ? "complete" : mocks.limitMode ? "failed" : "draft", researchDepth: "standard", updatedAt: new Date() }], isLoading: false, error: null, refetch: vi.fn() }) },
-      get: { useQuery: () => ({ data: { session: { id: "session-live", title: "Active brief", query: "Research a topic", researchGoal: "Research a topic", outputFormat: "report", status: mocks.completedMode ? "complete" : mocks.limitMode ? "failed" : "draft", errorMessage: mocks.limitMode ? "AI_SERVICE_LIMIT" : null, lifecyclePhase: mocks.limitMode ? "planning" : null, lifecycleProgress: mocks.limitMode ? 18 : null, lifecycleMessage: mocks.limitMode ? "Research safely paused during planning. Collected work remains available to resume." : null }, steps: mocks.completedMode ? [{ id: "step-1", ordinal: 0, title: "Sparse source check", description: "Check evidence", searchQuery: "research topic", status: "skipped" }] : [], sources: mocks.completedMode ? [{ id: "source-1", title: "Institutional evidence", url: "https://example.gov/evidence", publisher: "Evidence Office", excerpt: "A substantive source excerpt used by the research brief.", qualityScore: 82, qualitySignalsJson: JSON.stringify(["Primary or institutional domain", "Cited by 1 finding"]), citationCount: 1, retrievedAt: new Date() }] : [], findings: mocks.completedMode ? [{ id: "finding-1", ordinal: 0, title: "Cited finding", claim: "Evidence points to a clear conclusion.", evidence: "Supporting evidence.", citationSourceIdsJson: JSON.stringify(["source-1"]) }] : [], exports: [], shareLinks: mocks.completedMode ? [{ id: "active-share", createdAt: new Date(), revokedAt: null }] : [] }, isLoading: false, error: null, refetch: vi.fn() }) },
+      get: { useQuery: () => ({ data: { session: { id: "session-live", title: "Active brief", query: "Research a topic", researchGoal: "Research a topic", outputFormat: "report", status: mocks.completedMode ? "complete" : mocks.limitMode ? "failed" : "draft", finalOutput: mocks.completedMode ? "# Active brief\n\nA completed source-backed research summary." : null, errorMessage: mocks.limitMode ? "AI_SERVICE_LIMIT" : null, lifecyclePhase: mocks.limitMode ? "planning" : null, lifecycleProgress: mocks.limitMode ? 18 : null, lifecycleMessage: mocks.limitMode ? "Research safely paused during planning. Collected work remains available to resume." : null }, steps: mocks.completedMode ? [{ id: "step-1", ordinal: 0, title: "Sparse source check", description: "Check evidence", searchQuery: "research topic", status: "skipped" }] : [], sources: mocks.completedMode ? [{ id: "source-1", title: "Institutional evidence", url: "https://example.gov/evidence", publisher: "Evidence Office", excerpt: "A substantive source excerpt used by the research brief.", qualityScore: 82, qualitySignalsJson: JSON.stringify(["Primary or institutional domain", "Cited by 1 finding"]), citationCount: 1, retrievedAt: new Date() }] : [], findings: mocks.completedMode && !mocks.emptyFindingMode ? [{ id: "finding-1", ordinal: 0, title: "Cited finding", claim: "Evidence points to a clear conclusion.", evidence: "Supporting evidence.", citationSourceIdsJson: JSON.stringify(["source-1"]) }] : [], exports: [], shareLinks: mocks.completedMode ? [{ id: "active-share", createdAt: new Date(), revokedAt: null }] : [] }, isLoading: false, error: null, refetch: vi.fn() }) },
       create: { useMutation: () => ({ isPending: false, mutateAsync: vi.fn() }) },
       clarify: { useMutation: () => ({ isPending: false, mutateAsync: mocks.clarify }) },
       export: { useMutation: () => ({ isPending: false, mutateAsync: vi.fn() }) },
@@ -58,6 +59,7 @@ describe("Home active-session clarification flow", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.completedMode = false;
+    mocks.emptyFindingMode = false;
     mocks.limitMode = false;
     FakeEventSource.instances = [];
     vi.stubGlobal("EventSource", FakeEventSource);
@@ -164,5 +166,19 @@ describe("Home active-session clarification flow", () => {
 
     await user.click(screen.getByRole("button", { name: /broaden scope/i }));
     expect(mocks.broaden).toHaveBeenCalledWith({ sessionId: "session-live" });
+  });
+
+  it("shows a completed source-backed brief when a session has sources but no cited findings", async () => {
+    mocks.completedMode = true;
+    mocks.emptyFindingMode = true;
+    const user = userEvent.setup();
+    render(<Home />);
+
+    await user.click(screen.getByRole("button", { name: /open active session/i }));
+
+    expect(await screen.findByText("What the evidence suggests")).toBeTruthy();
+    expect(screen.getByLabelText("Source-backed research output")).toBeTruthy();
+    expect(screen.getByText("Evidence collected for review")).toBeTruthy();
+    expect(screen.getByRole("link", { name: "Institutional evidence" })).toHaveProperty("href", "https://example.gov/evidence");
   });
 });
