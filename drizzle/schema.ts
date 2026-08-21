@@ -36,10 +36,14 @@ export const researchSessions = mysqlTable("researchSessions", {
   lifecyclePhase: varchar("lifecyclePhase", { length: 64 }),
   lifecycleProgress: int("lifecycleProgress"),
   lifecycleMessage: text("lifecycleMessage"),
+  broadenedFromSessionId: varchar("broadenedFromSessionId", { length: 48 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
   completedAt: timestamp("completedAt"),
-}, table => [index("researchSessions_user_updated_idx").on(table.userId, table.updatedAt)]);
+}, table => [
+  index("researchSessions_user_updated_idx").on(table.userId, table.updatedAt),
+  index("researchSessions_broadened_from_idx").on(table.broadenedFromSessionId),
+]);
 
 export const researchSteps = mysqlTable("researchSteps", {
   id: varchar("id", { length: 48 }).primaryKey(),
@@ -62,8 +66,14 @@ export const researchSources = mysqlTable("researchSources", {
   url: text("url").notNull(),
   publisher: varchar("publisher", { length: 255 }),
   excerpt: text("excerpt"),
+  qualityScore: int("qualityScore").default(0).notNull(),
+  qualitySignalsJson: text("qualitySignalsJson"),
+  citationCount: int("citationCount").default(0).notNull(),
   retrievedAt: timestamp("retrievedAt").defaultNow().notNull(),
-}, table => [index("researchSources_session_idx").on(table.sessionId)]);
+}, table => [
+  index("researchSources_session_idx").on(table.sessionId),
+  index("researchSources_session_quality_idx").on(table.sessionId, table.qualityScore),
+]);
 
 export const researchFindings = mysqlTable("researchFindings", {
   id: varchar("id", { length: 48 }).primaryKey(),
@@ -96,6 +106,18 @@ export const researchExports = mysqlTable("researchExports", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, table => [index("researchExports_session_idx").on(table.sessionId)]);
 
+export const researchShareLinks = mysqlTable("researchShareLinks", {
+  id: varchar("id", { length: 48 }).primaryKey(),
+  sessionId: varchar("sessionId", { length: 48 }).notNull().references(() => researchSessions.id, { onDelete: "cascade" }),
+  ownerId: int("ownerId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  tokenHash: varchar("tokenHash", { length: 64 }).notNull().unique(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  revokedAt: timestamp("revokedAt"),
+}, table => [
+  index("researchShareLinks_owner_session_idx").on(table.ownerId, table.sessionId),
+  index("researchShareLinks_session_revoked_idx").on(table.sessionId, table.revokedAt),
+]);
+
 export type User = typeof users.$inferSelect;
 export type InsertUser = typeof users.$inferInsert;
 export type ResearchSession = typeof researchSessions.$inferSelect;
@@ -104,3 +126,4 @@ export type ResearchSource = typeof researchSources.$inferSelect;
 export type ResearchFinding = typeof researchFindings.$inferSelect;
 export type ResearchCitation = typeof researchCitations.$inferSelect;
 export type ResearchExport = typeof researchExports.$inferSelect;
+export type ResearchShareLink = typeof researchShareLinks.$inferSelect;

@@ -61,3 +61,9 @@
 - [x] Support explicit session IDs in the workspace URL so a saved research session can be intentionally opened and shared without changing the fresh-start default.
 - [x] Persist the actual last emitted lifecycle phase, progress, and activity message before an AI-limit interruption, then verify those exact values are restored.
 - [x] Clear the explicit session URL parameter on New Research and cover the shared-session-to-fresh-composer transition.
+- [x] Add a Broaden Scope action for sparse or incomplete research sessions that reuses the saved brief while expanding retrieval queries and evidence coverage.
+- [x] Add transparent source-quality scoring based on attribution completeness, publisher signals, retrieval relevance, and evidence support, then prioritize higher-quality sources in the workspace.
+- [x] Add secure shareable read-only research brief links with unguessable tokens, revocation controls, a public viewer, and user-scoped access management.
+- [x] Add database migrations, server/client regression coverage, and responsive verification for broaden-scope recovery, source scoring, and shared briefs.
+- [x] Add rendered client coverage for Broaden Scope, source-quality badges, share-link creation, and share-link revocation in the completed workspace.
+- [x] Add rendered client coverage for valid and unavailable read-only shared brief routes.

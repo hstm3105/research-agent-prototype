@@ -24,6 +24,9 @@ export type NormalizedSearchSource = {
   url: string;
   publisher: string | null;
   excerpt: string | null;
+  qualityScore?: number;
+  qualitySignalsJson?: string | null;
+  citationCount?: number;
   retrievedAt: Date;
 };
 

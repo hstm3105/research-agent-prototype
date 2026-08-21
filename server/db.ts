@@ -1,10 +1,11 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, isNull } from "drizzle-orm";
 import { drizzle } from "drizzle-orm/mysql2";
 import {
   InsertUser,
   researchCitations,
   researchExports,
   researchFindings,
+  researchShareLinks,
   researchSessions,
   researchSources,
   researchSteps,
@@ -76,6 +77,7 @@ export async function createResearchSession(input: {
   query: string;
   title: string;
   researchDepth: "quick" | "standard" | "deep";
+  broadenedFromSessionId?: string;
 }) {
   const db = await requireDb();
   await db.insert(researchSessions).values({ ...input, status: "draft" });
@@ -136,7 +138,16 @@ export async function addResearchSources(sources: Array<typeof researchSources.$
 
 export async function listResearchSources(sessionId: string) {
   const db = await requireDb();
-  return db.select().from(researchSources).where(eq(researchSources.sessionId, sessionId)).orderBy(researchSources.retrievedAt);
+  return db.select().from(researchSources).where(eq(researchSources.sessionId, sessionId)).orderBy(desc(researchSources.qualityScore), researchSources.retrievedAt);
+}
+
+export async function updateResearchSourceQuality(input: Array<{ id: string; qualityScore: number; qualitySignalsJson: string; citationCount: number }>) {
+  const db = await requireDb();
+  await Promise.all(input.map(source => db.update(researchSources).set({
+    qualityScore: source.qualityScore,
+    qualitySignalsJson: source.qualitySignalsJson,
+    citationCount: source.citationCount,
+  }).where(eq(researchSources.id, source.id))));
 }
 
 export async function addResearchFindings(findings: Array<typeof researchFindings.$inferInsert>) {
@@ -168,4 +179,25 @@ export async function createResearchExport(input: typeof researchExports.$inferI
 export async function listResearchExports(sessionId: string) {
   const db = await requireDb();
   return db.select().from(researchExports).where(eq(researchExports.sessionId, sessionId)).orderBy(desc(researchExports.createdAt));
+}
+
+export async function createResearchShareLink(input: typeof researchShareLinks.$inferInsert) {
+  const db = await requireDb();
+  await db.insert(researchShareLinks).values(input);
+}
+
+export async function listResearchShareLinksForUser(sessionId: string, ownerId: number) {
+  const db = await requireDb();
+  return db.select().from(researchShareLinks).where(and(eq(researchShareLinks.sessionId, sessionId), eq(researchShareLinks.ownerId, ownerId))).orderBy(desc(researchShareLinks.createdAt));
+}
+
+export async function revokeResearchShareLinkForUser(id: string, ownerId: number) {
+  const db = await requireDb();
+  await db.update(researchShareLinks).set({ revokedAt: new Date() }).where(and(eq(researchShareLinks.id, id), eq(researchShareLinks.ownerId, ownerId)));
+}
+
+export async function getActiveResearchShareLinkByTokenHash(tokenHash: string) {
+  const db = await requireDb();
+  const rows = await db.select().from(researchShareLinks).where(and(eq(researchShareLinks.tokenHash, tokenHash), isNull(researchShareLinks.revokedAt))).limit(1);
+  return rows[0] ?? null;
 }

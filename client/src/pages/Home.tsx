@@ -12,6 +12,7 @@ import {
   Check,
   ChevronRight,
   CircleAlert,
+  Clipboard,
   Clock3,
   Download,
   FileText,
@@ -21,8 +22,10 @@ import {
   Play,
   Quote,
   RotateCcw,
+  ScanSearch,
   Search,
   Send,
+  Share2,
   Sparkles,
   TableProperties,
   Timer,
@@ -31,10 +34,11 @@ import {
 import React, { useEffect, useMemo, useRef, useState } from "react";
 
 type LivePlanStep = { id: string; ordinal: number; title: string; description: string; searchQuery: string; status?: string };
-type LiveSource = { id: string; stepId?: string | null; title: string; url: string; publisher: string | null; excerpt: string | null; retrievedAt: Date | string };
+type LiveSource = { id: string; stepId?: string | null; title: string; url: string; publisher: string | null; excerpt: string | null; qualityScore?: number; qualitySignalsJson?: string | null; citationCount?: number; retrievedAt: Date | string };
 type LiveFinding = { id: string; stepId?: string | null; ordinal?: number; title: string; claim: string; evidence: string; citationSourceIds: string[] };
 type LiveClarification = { question: string };
 type LiveIntentPreview = { title: string; researchGoal: string; outputFormat: string };
+type ShareLink = { id: string; createdAt: Date | string; revokedAt: Date | string | null };
 
 const exampleQueries = [
   "Compare the best approaches to decarbonizing heavy industry in the next decade.",
@@ -54,6 +58,23 @@ function statusLabel(status: string | undefined) {
 
 function formatDate(value: Date | string) {
   return new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric" });
+}
+
+function getSourceSignals(source: LiveSource) {
+  try {
+    const parsed = JSON.parse(source.qualitySignalsJson || "[]");
+    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+function SourceQualityBadge({ source }: { source: LiveSource }) {
+  const score = source.qualityScore ?? 0;
+  const signals = getSourceSignals(source);
+  const label = score >= 70 ? "High signal" : score >= 45 ? "Useful context" : "Limited signal";
+  const tone = score >= 70 ? "bg-emerald-500/10 text-emerald-800" : score >= 45 ? "bg-amber-500/10 text-amber-800" : "bg-muted text-muted-foreground";
+  return <span title={signals.join(" · ") || "Source metadata is limited"} className={cn("inline-flex rounded-full px-2 py-1 font-mono-ui text-[9px] font-medium uppercase tracking-[0.1em]", tone)}>{label}</span>;
 }
 
 function CitationChips({ sourceIds, sourceMap }: { sourceIds: string[]; sourceMap: Map<string, LiveSource> }) {
@@ -96,6 +117,9 @@ export default function Home() {
   const createResearch = trpc.research.create.useMutation();
   const clarifyResearch = trpc.research.clarify.useMutation();
   const createExport = trpc.research.export.useMutation();
+  const broadenResearch = trpc.research.broaden.useMutation();
+  const createShareLink = trpc.research.createShareLink.useMutation();
+  const revokeShareLink = trpc.research.revokeShareLink.useMutation();
   const [query, setQuery] = useState("");
   const [researchDepth, setResearchDepth] = useState<keyof typeof depthOptions>("standard");
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
@@ -107,6 +131,7 @@ export default function Home() {
   const [liveIntent, setLiveIntent] = useState<LiveIntentPreview | null>(null);
   const [activityLog, setActivityLog] = useState<ResearchActivity[]>([]);
   const [streamMessage, setStreamMessage] = useState<string | null>(null);
+  const [newShareUrl, setNewShareUrl] = useState<string | null>(null);
   const streamRef = useRef<EventSource | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const detailQuery = trpc.research.get.useQuery({ sessionId: selectedSessionId ?? "pending" }, { enabled: Boolean(selectedSessionId), refetchOnWindowFocus: false });
@@ -151,6 +176,7 @@ export default function Home() {
     const persisted = (detailQuery.data?.findings ?? []).map(finding => ({ ...finding, citationSourceIds: JSON.parse(finding.citationSourceIdsJson || "[]") })) as unknown as LiveFinding[];
     return Array.from(new Map([...persisted, ...liveFindings].map(item => [item.id, item])).values()).sort((a, b) => (a.ordinal ?? 0) - (b.ordinal ?? 0));
   }, [detailQuery.data?.findings, liveFindings]);
+  const shareLinks = (detailQuery.data?.shareLinks ?? []) as ShareLink[];
   const sidebarSessions: ResearchSessionNavItem[] = (sessionsQuery.data ?? []).map(item => ({ id: item.id, title: item.title, status: item.status, researchDepth: item.researchDepth, updatedAt: item.updatedAt }));
 
   function resetLiveState() {
@@ -170,6 +196,7 @@ export default function Home() {
     setSelectedSessionId(null);
     setQuery("");
     setResearchDepth("standard");
+    setNewShareUrl(null);
     const url = new URL(window.location.href);
     url.searchParams.delete("session");
     window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
@@ -269,6 +296,45 @@ export default function Home() {
     }
   }
 
+  async function broadenScope() {
+    if (!selectedSessionId) return;
+    try {
+      const created = await broadenResearch.mutateAsync({ sessionId: selectedSessionId });
+      if (!created) throw new Error("This completed brief could not be broadened.");
+      await utils.research.list.invalidate();
+      openStream(created.id);
+      toast.success("Broader evidence pass started", { description: "The original brief is preserved; this new run will seek complementary sources." });
+    } catch (error) {
+      toast.error("Could not broaden the research", { description: error instanceof Error ? error.message : "Please retry." });
+    }
+  }
+
+  async function shareBrief() {
+    if (!selectedSessionId) return;
+    try {
+      const created = await createShareLink.mutateAsync({ sessionId: selectedSessionId });
+      if (!created) throw new Error("This completed brief could not be shared.");
+      const url = `${window.location.origin}/brief/${created.token}`;
+      setNewShareUrl(url);
+      await utils.research.get.invalidate({ sessionId: selectedSessionId });
+      await navigator.clipboard?.writeText(url);
+      toast.success("Read-only brief link created", { description: "The link has been copied. You can revoke it at any time." });
+    } catch (error) {
+      toast.error("Could not create a share link", { description: error instanceof Error ? error.message : "Please retry." });
+    }
+  }
+
+  async function revokeShare(id: string) {
+    if (!selectedSessionId) return;
+    try {
+      await revokeShareLink.mutateAsync({ id });
+      await utils.research.get.invalidate({ sessionId: selectedSessionId });
+      toast.success("Share link revoked", { description: "It can no longer open the research brief." });
+    } catch (error) {
+      toast.error("Could not revoke the link", { description: error instanceof Error ? error.message : "Please retry." });
+    }
+  }
+
   const isWorking = createResearch.isPending || session?.status === "planning" || session?.status === "researching" || Boolean(activeStepId);
   const isAwaitingClarification = Boolean(liveClarification) || session?.status === "awaiting_clarification";
   const displayStatus = liveClarification ? "awaiting_clarification" : session?.status;
@@ -282,6 +348,7 @@ export default function Home() {
   const lifecycleMessage = latestActivity?.message ?? session?.lifecycleMessage ?? null;
   const lifecycleRecovery = plan.some(step => step.status === "skipped") ? "Continuing with gaps" : session?.errorMessage ? "Attention needed" : "Healthy";
   const isAiServiceLimit = session?.errorMessage === "AI_SERVICE_LIMIT" || streamMessage === "The AI service is temporarily unavailable. Your research workspace has been preserved and can be resumed.";
+  const needsBroaderEvidence = session?.status === "complete" && (allSources.length < 3 || plan.some(step => step.status === "skipped") || allFindings.length < 2);
 
   return (
     <DashboardLayout sessions={sidebarSessions} selectedSessionId={selectedSessionId} isSessionsLoading={sessionsQuery.isLoading} sessionsError={Boolean(sessionsQuery.error)} onRetrySessions={() => void sessionsQuery.refetch()} onNewResearch={startNewResearch} onSelectSession={id => { streamRef.current?.close(); resetLiveState(); setSelectedSessionId(id); }} onSettings={() => toast("Research controls", { description: "Current prototype uses a cited public-source layer and stores completed work per signed-in user." })}>
@@ -324,7 +391,9 @@ export default function Home() {
 
                 {isAwaitingClarification ? <ClarificationCard question={liveClarification?.question || session?.clarifyingQuestion || "What should the research prioritize?"} onSubmit={submitClarification} loading={clarifyResearch.isPending} /> : <>
                   {plan.length > 0 && <div className="mt-8"><div className="mb-3 flex items-center gap-2"><Layers3 className="h-4 w-4 text-primary" /><h2 className="font-mono-ui text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Research plan</h2></div><div className="grid gap-2">{plan.map((step, index) => { const isActive = activeStepId === step.id || step.status === "active"; const isDone = step.status === "complete"; const isSkipped = step.status === "skipped"; return <div key={step.id} className={cn("flex items-start gap-3 rounded-xl border px-4 py-3 transition-colors", isActive ? "border-primary/30 bg-primary/[0.045]" : isSkipped ? "border-amber-200 bg-amber-50/35" : "border-border bg-card/60")}><span className={cn("mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px]", isDone ? "border-emerald-500 bg-emerald-500 text-white" : isSkipped ? "border-amber-400 bg-amber-100 text-amber-800" : isActive ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground")}>{isDone ? <Check className="h-3 w-3" /> : isSkipped ? <Clock3 className="h-3 w-3" /> : isActive ? <Loader2 className="h-3 w-3 animate-spin" /> : index + 1}</span><div className="min-w-0"><p className="text-sm font-medium">{step.title}</p><p className="mt-0.5 text-xs leading-5 text-muted-foreground">{step.description}</p></div>{isActive && <span className="ml-auto font-mono-ui text-[9px] uppercase tracking-[0.12em] text-primary">Working</span>}{isSkipped && <span className="ml-auto font-mono-ui text-[9px] uppercase tracking-[0.12em] text-amber-700">Skipped</span>}</div> })}</div></div>}
+                  {needsBroaderEvidence && <section className="mt-8 rounded-[1.35rem] border border-amber-200 bg-amber-50/70 p-5 text-amber-950"><div className="flex gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-800"><ScanSearch className="h-4 w-4" /></span><div><p className="font-mono-ui text-[10px] font-medium uppercase tracking-[0.15em] text-amber-700">Evidence coverage is limited</p><h2 className="mt-2 font-editorial text-2xl font-semibold leading-tight">Explore the gaps without losing this brief.</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-amber-900/85">This run retained {allSources.length} source{allSources.length === 1 ? "" : "s"} and {allFindings.length} cited finding{allFindings.length === 1 ? "" : "s"}. A broader follow-up keeps the decision context while deliberately seeking complementary evidence.</p><Button disabled={broadenResearch.isPending} onClick={() => void broadenScope()} className="mt-4 rounded-xl bg-amber-700 text-white hover:bg-amber-800"><ScanSearch className="mr-2 h-3.5 w-3.5" /> {broadenResearch.isPending ? "Starting broader pass…" : "Broaden scope"}</Button></div></div></section>}
                   {allFindings.length > 0 && <div className="mt-10"><div className="mb-5 flex items-center justify-between"><div><p className="font-mono-ui text-[10px] font-medium uppercase tracking-[0.16em] text-primary">Evidence synthesis</p><h2 className="mt-1 font-editorial text-3xl font-semibold tracking-[-0.025em]">What the evidence suggests</h2></div><span className="hidden rounded-full bg-muted px-3 py-1 font-mono-ui text-[10px] uppercase tracking-[0.1em] text-muted-foreground sm:inline">{allFindings.length} findings</span></div>{session?.finalOutput && <div className="mb-7 rounded-2xl border border-border bg-card px-5 py-4 text-sm leading-6 text-secondary-foreground"><Streamdown>{session.finalOutput}</Streamdown></div>}<FindingsView outputFormat={outputFormat} findings={allFindings} sourceMap={sourceMap} /></div>}
+                  {session?.status === "complete" && <CompletedBriefControls sources={allSources} shareLinks={shareLinks} newShareUrl={newShareUrl} sharing={createShareLink.isPending} revoking={revokeShareLink.isPending} onShare={shareBrief} onRevoke={revokeShare} />}
                   {!plan.length && !isWorking && !session?.errorMessage && <div className="mt-16 rounded-2xl border border-dashed border-border bg-card/40 p-8 text-center"><FileText className="mx-auto h-5 w-5 text-primary" /><p className="mt-3 text-sm font-medium">This session is ready to begin.</p><p className="mt-1 text-xs text-muted-foreground">Open the research stream to generate the adaptive plan.</p><Button variant="outline" onClick={() => openStream(selectedSessionId)} className="mt-5 rounded-xl"><Play className="mr-2 h-3.5 w-3.5" /> Run research</Button></div>}
                   {isAiServiceLimit ? <LimitRecoveryCard phase={lifecyclePhase} progress={lifecycleProgress} message={lifecycleMessage} onRetry={() => openStream(selectedSessionId)} onNewResearch={startNewResearch} /> : session?.errorMessage && <div className="mt-8 rounded-2xl border border-rose-200 bg-rose-50 p-5 text-rose-900"><div className="flex gap-3"><CircleAlert className="mt-0.5 h-4 w-4" /><div><p className="text-sm font-semibold">Research paused</p><p className="mt-1 text-sm leading-6">{session.errorMessage}</p><Button variant="outline" onClick={() => openStream(selectedSessionId)} className="mt-4 border-rose-200 bg-white text-rose-800 hover:bg-rose-100"><ArrowRight className="mr-2 h-3.5 w-3.5" /> Try again</Button></div></div></div>}
                 </>}
@@ -348,4 +417,9 @@ function ClarificationCard({ question, onSubmit, loading }: { question: string; 
 
 function LimitRecoveryCard({ phase, progress, message, onRetry, onNewResearch }: { phase: string; progress: number; message: string | null; onRetry: () => void; onNewResearch: () => void }) {
   return <div aria-label="AI service recovery" className="mt-8 rounded-[1.35rem] border border-amber-200 bg-amber-50/70 p-6 text-amber-950"><div className="flex gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-800"><Timer className="h-4 w-4" /></span><div><p className="font-mono-ui text-[10px] font-medium uppercase tracking-[0.15em] text-amber-700">Research safely paused</p><h2 className="mt-2 font-editorial text-2xl font-semibold leading-tight">The AI service is temporarily unavailable.</h2><p className="mt-3 max-w-2xl text-sm leading-6 text-amber-900/85">Your question, research plan, collected sources, and cited findings are saved. You can resume this session when the service is available, or begin a different research brief without losing this work.</p><div className="mt-4 grid max-w-md grid-cols-2 gap-2"><div className="rounded-xl border border-amber-200 bg-white/75 px-3 py-2"><p className="font-mono-ui text-[9px] uppercase tracking-[0.12em] text-amber-700">Paused at</p><p aria-label="Paused recovery phase" className="mt-1 text-xs font-semibold capitalize">{phase.replace(/_/g, " ")}</p></div><div className="rounded-xl border border-amber-200 bg-white/75 px-3 py-2"><p className="font-mono-ui text-[9px] uppercase tracking-[0.12em] text-amber-700">Progress</p><p aria-label="Paused recovery progress" className="mt-1 text-xs font-semibold">{progress}%</p></div></div>{message && <p className="mt-3 text-xs leading-5 text-amber-900/75">{message}</p>}<div className="mt-5 flex flex-wrap gap-2"><Button onClick={onRetry} className="rounded-xl bg-amber-700 text-white hover:bg-amber-800"><RotateCcw className="mr-2 h-3.5 w-3.5" /> Resume research</Button><Button variant="outline" onClick={onNewResearch} className="rounded-xl border-amber-200 bg-white text-amber-900 hover:bg-amber-100">Start new research</Button></div></div></div></div>;
+}
+
+function CompletedBriefControls({ sources, shareLinks, newShareUrl, sharing, revoking, onShare, onRevoke }: { sources: LiveSource[]; shareLinks: ShareLink[]; newShareUrl: string | null; sharing: boolean; revoking: boolean; onShare: () => void; onRevoke: (id: string) => void }) {
+  const activeLinks = shareLinks.filter(link => !link.revokedAt);
+  return <section className="mt-10 rounded-[1.35rem] border border-border bg-card p-5"><div className="flex flex-wrap items-start justify-between gap-4"><div><p className="font-mono-ui text-[10px] font-medium uppercase tracking-[0.15em] text-primary">Evidence & distribution</p><h2 className="mt-1 font-editorial text-2xl font-semibold tracking-[-0.025em]">Prioritize the strongest available signals.</h2><p className="mt-2 max-w-2xl text-xs leading-5 text-secondary-foreground">Source signals reflect publisher metadata, excerpt depth, query relevance, and citations in this brief. They help prioritize review and are not a factual-verification score.</p></div><Button disabled={sharing} onClick={onShare} variant="outline" className="rounded-xl"><Share2 className="mr-2 h-3.5 w-3.5" /> {sharing ? "Creating link…" : "Share read-only brief"}</Button></div><div className="mt-5 grid gap-2">{sources.slice(0, 3).map(source => <a key={source.id} href={source.url} target="_blank" rel="noreferrer" className="flex items-center justify-between gap-3 rounded-xl bg-muted/45 p-3 hover:bg-muted"><div className="min-w-0"><p className="truncate text-xs font-semibold">{source.title}</p><p className="mt-1 text-[11px] text-muted-foreground">{source.publisher || "Public source"}{source.citationCount ? ` · Cited by ${source.citationCount}` : ""}</p></div><SourceQualityBadge source={source} /></a>)}</div>{newShareUrl && <div className="mt-5 rounded-xl border border-primary/20 bg-primary/[0.045] p-3"><p className="font-mono-ui text-[9px] uppercase tracking-[0.12em] text-primary">New read-only link</p><p className="mt-1 break-all text-[11px] leading-5 text-secondary-foreground">{newShareUrl}</p><Button onClick={() => void navigator.clipboard?.writeText(newShareUrl)} variant="ghost" size="sm" className="mt-1 h-7 px-0 text-xs text-primary"><Clipboard className="mr-1.5 h-3.5 w-3.5" /> Copy again</Button></div>}{activeLinks.length > 0 && <div className="mt-5 border-t border-border pt-4"><p className="font-mono-ui text-[9px] uppercase tracking-[0.12em] text-muted-foreground">Active share links</p><div className="mt-2 space-y-1">{activeLinks.map(link => <div key={link.id} className="flex items-center justify-between gap-3 rounded-lg bg-muted/45 px-3 py-2"><span className="text-xs text-secondary-foreground">Created {formatDate(link.createdAt)}</span><Button disabled={revoking} onClick={() => onRevoke(link.id)} variant="ghost" size="sm" className="h-7 px-1.5 text-xs text-rose-700 hover:bg-rose-50 hover:text-rose-800">Revoke</Button></div>)}</div></div>}</section>;
 }

@@ -9,11 +9,13 @@ import {
   listResearchSteps,
   replaceResearchSteps,
   updateResearchSessionForUser,
+  updateResearchSourceQuality,
   updateResearchStep,
   updateResearchStepDetails,
 } from "../db";
 import { invokeLLM, listLLMModels } from "../_core/llm";
 import { searchPublicWeb } from "./search";
+import { scoreResearchSource } from "./sourceQuality";
 import type { AgentFinding, ResearchIntent, ResearchPlanStep, ResearchProgressEvent } from "./types";
 
 const outputFormatValues = ["report", "summary", "comparison", "timeline", "qa"] as const;
@@ -326,7 +328,19 @@ export async function runResearchSession(input: {
         emit(input.emit, { type: "step", sessionId: session.id, stepId: step.id, status: "skipped", title: step.title });
         continue;
       }
-      const persistedSources = webSources.map(source => ({ id: nanoid(), sessionId: session.id, stepId: step.id, sourceType: "web" as const, ...source }));
+      const persistedSources = webSources.map(source => {
+        const quality = scoreResearchSource(source, step.searchQuery);
+        return {
+          id: nanoid(),
+          sessionId: session.id,
+          stepId: step.id,
+          sourceType: "web" as const,
+          ...source,
+          qualityScore: quality.score,
+          qualitySignalsJson: JSON.stringify(quality.signals),
+          citationCount: 0,
+        };
+      });
       await addResearchSources(persistedSources);
       emit(input.emit, { type: "sources", sessionId: session.id, stepId: step.id, sources: persistedSources });
       emit(input.emit, { type: "activity", sessionId: session.id, phase: "analysis", message: `${persistedSources.length} attributable sources found. Evaluating the evidence for this step.`, progress: 35 + Math.round((step.ordinal / Math.max(plan.length, 1)) * 45) });
@@ -408,6 +422,13 @@ export async function runResearchSession(input: {
           sourceId,
         }))
       ));
+      const citationCounts = new Map<string, number>();
+      safeFindings.flatMap(finding => finding.citationSourceIds).forEach(sourceId => citationCounts.set(sourceId, (citationCounts.get(sourceId) ?? 0) + 1));
+      await updateResearchSourceQuality(persistedSources.map(source => {
+        const citationCount = citationCounts.get(source.id) ?? 0;
+        const quality = scoreResearchSource(source, step.searchQuery, citationCount);
+        return { id: source.id, qualityScore: quality.score, qualitySignalsJson: JSON.stringify(quality.signals), citationCount };
+      }));
       emit(input.emit, { type: "findings", sessionId: session.id, stepId: step.id, findings: safeFindings.map((finding, index) => ({ ...finding, id: persistedFindings[index].id })) });
       emit(input.emit, { type: "activity", sessionId: session.id, phase: "analysis", message: `${safeFindings.length} cited findings added from ${step.title}.`, progress: 43 + Math.round(((step.ordinal + 1) / Math.max(plan.length, 1)) * 42) });
       await updateResearchStep(step.id, { status: "complete", completedAt: new Date() });

@@ -8,6 +8,10 @@ const mocks = vi.hoisted(() => ({
   invalidateGet: vi.fn().mockResolvedValue(undefined),
   invalidateList: vi.fn().mockResolvedValue(undefined),
   clarify: vi.fn().mockResolvedValue(undefined),
+  broaden: vi.fn().mockResolvedValue({ id: "broader-session" }),
+  createShare: vi.fn().mockResolvedValue({ id: "share-1", token: "secure-shared-brief-token-1234567890" }),
+  revokeShare: vi.fn().mockResolvedValue({ id: "active-share", revoked: true }),
+  completedMode: false,
   limitMode: false,
 }));
 
@@ -22,11 +26,14 @@ vi.mock("@/lib/trpc", () => ({
   trpc: {
     useUtils: () => ({ research: { get: { invalidate: mocks.invalidateGet }, list: { invalidate: mocks.invalidateList } } }),
     research: {
-      list: { useQuery: () => ({ data: [{ id: "session-live", title: "Active brief", status: mocks.limitMode ? "failed" : "draft", researchDepth: "standard", updatedAt: new Date() }], isLoading: false, error: null, refetch: vi.fn() }) },
-      get: { useQuery: () => ({ data: { session: { id: "session-live", title: "Active brief", query: "Research a topic", researchGoal: "Research a topic", outputFormat: "report", status: mocks.limitMode ? "failed" : "draft", errorMessage: mocks.limitMode ? "AI_SERVICE_LIMIT" : null, lifecyclePhase: mocks.limitMode ? "planning" : null, lifecycleProgress: mocks.limitMode ? 18 : null, lifecycleMessage: mocks.limitMode ? "Research safely paused during planning. Collected work remains available to resume." : null }, steps: [], sources: [], findings: [], exports: [] }, isLoading: false, error: null, refetch: vi.fn() }) },
+      list: { useQuery: () => ({ data: [{ id: "session-live", title: "Active brief", status: mocks.completedMode ? "complete" : mocks.limitMode ? "failed" : "draft", researchDepth: "standard", updatedAt: new Date() }], isLoading: false, error: null, refetch: vi.fn() }) },
+      get: { useQuery: () => ({ data: { session: { id: "session-live", title: "Active brief", query: "Research a topic", researchGoal: "Research a topic", outputFormat: "report", status: mocks.completedMode ? "complete" : mocks.limitMode ? "failed" : "draft", errorMessage: mocks.limitMode ? "AI_SERVICE_LIMIT" : null, lifecyclePhase: mocks.limitMode ? "planning" : null, lifecycleProgress: mocks.limitMode ? 18 : null, lifecycleMessage: mocks.limitMode ? "Research safely paused during planning. Collected work remains available to resume." : null }, steps: mocks.completedMode ? [{ id: "step-1", ordinal: 0, title: "Sparse source check", description: "Check evidence", searchQuery: "research topic", status: "skipped" }] : [], sources: mocks.completedMode ? [{ id: "source-1", title: "Institutional evidence", url: "https://example.gov/evidence", publisher: "Evidence Office", excerpt: "A substantive source excerpt used by the research brief.", qualityScore: 82, qualitySignalsJson: JSON.stringify(["Primary or institutional domain", "Cited by 1 finding"]), citationCount: 1, retrievedAt: new Date() }] : [], findings: mocks.completedMode ? [{ id: "finding-1", ordinal: 0, title: "Cited finding", claim: "Evidence points to a clear conclusion.", evidence: "Supporting evidence.", citationSourceIdsJson: JSON.stringify(["source-1"]) }] : [], exports: [], shareLinks: mocks.completedMode ? [{ id: "active-share", createdAt: new Date(), revokedAt: null }] : [] }, isLoading: false, error: null, refetch: vi.fn() }) },
       create: { useMutation: () => ({ isPending: false, mutateAsync: vi.fn() }) },
       clarify: { useMutation: () => ({ isPending: false, mutateAsync: mocks.clarify }) },
       export: { useMutation: () => ({ isPending: false, mutateAsync: vi.fn() }) },
+      broaden: { useMutation: () => ({ isPending: false, mutateAsync: mocks.broaden }) },
+      createShareLink: { useMutation: () => ({ isPending: false, mutateAsync: mocks.createShare }) },
+      revokeShareLink: { useMutation: () => ({ isPending: false, mutateAsync: mocks.revokeShare }) },
     },
   },
 }));
@@ -50,10 +57,12 @@ describe("Home active-session clarification flow", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.completedMode = false;
     mocks.limitMode = false;
     FakeEventSource.instances = [];
     vi.stubGlobal("EventSource", FakeEventSource);
     window.history.replaceState({}, "", "/");
+    vi.stubGlobal("navigator", { clipboard: { writeText: vi.fn().mockResolvedValue(undefined) } });
   });
 
   it("renders a streamed clarification immediately and resumes the active stream after submission", async () => {
@@ -125,5 +134,25 @@ describe("Home active-session clarification flow", () => {
     expect(FakeEventSource.instances).toHaveLength(1);
     await user.click(screen.getByRole("button", { name: /start new research/i }));
     expect(await screen.findByPlaceholderText(/What do you need to understand/i)).toBeTruthy();
+  });
+
+  it("offers sparse-evidence broadening, transparent source signals, and revocable sharing on a completed brief", async () => {
+    mocks.completedMode = true;
+    const user = userEvent.setup();
+    render(<Home />);
+
+    await user.click(screen.getByRole("button", { name: /open active session/i }));
+    expect(await screen.findByText(/Evidence coverage is limited/i)).toBeTruthy();
+    expect(screen.getByText("High signal")).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: /share read-only brief/i }));
+    expect(mocks.createShare).toHaveBeenCalledWith({ sessionId: "session-live" });
+    expect(await screen.findByText(/New read-only link/i)).toBeTruthy();
+
+    await user.click(screen.getByRole("button", { name: "Revoke" }));
+    expect(mocks.revokeShare).toHaveBeenCalledWith({ id: "active-share" });
+
+    await user.click(screen.getByRole("button", { name: /broaden scope/i }));
+    expect(mocks.broaden).toHaveBeenCalledWith({ sessionId: "session-live" });
   });
 });

@@ -1,21 +1,41 @@
 import { nanoid } from "nanoid";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
   createResearchSession,
+  createResearchShareLink,
+  getActiveResearchShareLinkByTokenHash,
   getResearchSessionForUser,
   listResearchCitations,
   listResearchExports,
   listResearchFindings,
+  listResearchShareLinksForUser,
   listResearchSessionsForUser,
   listResearchSources,
   listResearchSteps,
+  revokeResearchShareLinkForUser,
   updateResearchSessionForUser,
 } from "../db";
-import { protectedProcedure, router } from "../_core/trpc";
+import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { generateResearchExport } from "../research/export";
 
 const querySchema = z.object({ query: z.string().trim().min(8).max(8_000), researchDepth: z.enum(["quick", "standard", "deep"]).default("standard") });
 const sessionSchema = z.object({ sessionId: z.string().min(6).max(64) });
+const shareTokenSchema = z.object({ token: z.string().min(24).max(128) });
+
+function hashShareToken(token: string) {
+  return createHash("sha256").update(token).digest("hex");
+}
+
+async function getResearchBundle(sessionId: string) {
+  const [steps, sources, findings] = await Promise.all([
+    listResearchSteps(sessionId),
+    listResearchSources(sessionId),
+    listResearchFindings(sessionId),
+  ]);
+  const citations = await listResearchCitations(findings.map(finding => finding.id));
+  return { steps, sources, findings, citations };
+}
 
 export const researchRouter = router({
   list: protectedProcedure.query(({ ctx }) => listResearchSessionsForUser(ctx.user.id)),
@@ -26,14 +46,12 @@ export const researchRouter = router({
   get: protectedProcedure.input(sessionSchema).query(async ({ ctx, input }) => {
     const session = await getResearchSessionForUser(input.sessionId, ctx.user.id);
     if (!session) return null;
-    const [steps, sources, findings, exports] = await Promise.all([
-      listResearchSteps(session.id),
-      listResearchSources(session.id),
-      listResearchFindings(session.id),
+    const [{ steps, sources, findings, citations }, exports, shareLinks] = await Promise.all([
+      getResearchBundle(session.id),
       listResearchExports(session.id),
+      listResearchShareLinksForUser(session.id, ctx.user.id),
     ]);
-    const citations = await listResearchCitations(findings.map(finding => finding.id));
-    return { session, steps, sources, findings, citations, exports };
+    return { session, steps, sources, findings, citations, exports, shareLinks };
   }),
   clarify: protectedProcedure.input(z.object({ sessionId: z.string().min(6).max(64), answer: z.string().trim().min(2).max(4_000) })).mutation(async ({ ctx, input }) => {
     const session = await getResearchSessionForUser(input.sessionId, ctx.user.id);
@@ -44,4 +62,53 @@ export const researchRouter = router({
   export: protectedProcedure.input(z.object({ sessionId: z.string().min(6).max(64), format: z.enum(["markdown", "html"]) })).mutation(({ ctx, input }) =>
     generateResearchExport({ sessionId: input.sessionId, userId: ctx.user.id, format: input.format })
   ),
+  broaden: protectedProcedure.input(sessionSchema).mutation(async ({ ctx, input }) => {
+    const session = await getResearchSessionForUser(input.sessionId, ctx.user.id);
+    if (!session || session.status !== "complete") return null;
+    const sources = await listResearchSources(session.id);
+    const coveredSourceTitles = sources.slice(0, 12).map(source => source.title).join("; ");
+    const query = `${session.query}\n\nBroaden this completed research into a second, complementary pass. Seek additional perspectives, adjacent evidence, and material gaps not addressed by the first brief. Preserve the same decision context, but avoid repeating these already-covered sources where possible: ${coveredSourceTitles || "No sources were retained in the first pass."}`;
+    const title = `Broader scope · ${session.title}`.slice(0, 255);
+    return createResearchSession({
+      id: nanoid(),
+      userId: ctx.user.id,
+      query,
+      title,
+      researchDepth: session.researchDepth,
+      broadenedFromSessionId: session.id,
+    });
+  }),
+  createShareLink: protectedProcedure.input(sessionSchema).mutation(async ({ ctx, input }) => {
+    const session = await getResearchSessionForUser(input.sessionId, ctx.user.id);
+    if (!session) return null;
+    if (session.status !== "complete") throw new Error("Only completed research briefs can be shared");
+    const token = nanoid(36);
+    const id = nanoid();
+    await createResearchShareLink({ id, sessionId: session.id, ownerId: ctx.user.id, tokenHash: hashShareToken(token) });
+    return { id, token, createdAt: new Date() };
+  }),
+  revokeShareLink: protectedProcedure.input(z.object({ id: z.string().min(6).max(64) })).mutation(async ({ ctx, input }) => {
+    await revokeResearchShareLinkForUser(input.id, ctx.user.id);
+    return { id: input.id, revoked: true };
+  }),
+  sharedBrief: publicProcedure.input(shareTokenSchema).query(async ({ input }) => {
+    const link = await getActiveResearchShareLinkByTokenHash(hashShareToken(input.token));
+    if (!link) return null;
+    const session = await getResearchSessionForUser(link.sessionId, link.ownerId);
+    if (!session || session.status !== "complete") return null;
+    const bundle = await getResearchBundle(session.id);
+    return {
+      publishedAt: link.createdAt,
+      session: {
+        id: session.id,
+        title: session.title,
+        query: session.query,
+        researchGoal: session.researchGoal,
+        outputFormat: session.outputFormat,
+        finalOutput: session.finalOutput,
+        completedAt: session.completedAt,
+      },
+      ...bundle,
+    };
+  }),
 });

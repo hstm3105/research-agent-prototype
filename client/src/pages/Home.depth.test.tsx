@@ -31,6 +31,9 @@ vi.mock("@/lib/trpc", () => ({
       create: { useMutation: () => ({ isPending: false, mutateAsync: mocks.create }) },
       clarify: { useMutation: () => ({ isPending: false, mutateAsync: vi.fn() }) },
       export: { useMutation: () => ({ isPending: false, mutateAsync: vi.fn() }) },
+      broaden: { useMutation: () => ({ isPending: false, mutateAsync: vi.fn() }) },
+      createShareLink: { useMutation: () => ({ isPending: false, mutateAsync: vi.fn() }) },
+      revokeShareLink: { useMutation: () => ({ isPending: false, mutateAsync: vi.fn() }) },
     },
   },
 }));

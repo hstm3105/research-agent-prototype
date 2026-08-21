@@ -10,6 +10,7 @@ const mocks = vi.hoisted(() => ({
     listResearchSteps: vi.fn(),
     replaceResearchSteps: vi.fn(),
     updateResearchSessionForUser: vi.fn(),
+    updateResearchSourceQuality: vi.fn(),
     updateResearchStep: vi.fn(),
     updateResearchStepDetails: vi.fn(),
   },
