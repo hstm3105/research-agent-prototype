@@ -5,7 +5,7 @@ import { createGoogleWorkspaceExport, getGoogleWorkspaceConnection, getResearchS
 import { ENV } from "../_core/env";
 import { buildDecisionArtifact } from "../research/decisionArtifact";
 import type { RecommendationBrief, RecommendationEvidence, RecommendationOption } from "../research/types";
-import { buildGoogleDocTemplate, buildGoogleSheetTemplate, buildGoogleSlidesTemplate } from "../research/workspaceTemplates";
+import { buildGoogleDocTemplate, buildGoogleSheetTemplate, buildGoogleSlidesTemplate, type GoogleDocTemplate } from "../research/workspaceTemplates";
 
 const GOOGLE_SCOPES = [
   "https://www.googleapis.com/auth/drive.file",
@@ -176,15 +176,70 @@ async function artifactForSession(sessionId: string, userId: number) {
   });
 }
 
-async function createGoogleDoc(accessToken: string, title: string, body: string) {
-  const document = await googleJson<{ documentId: string }>("https://docs.googleapis.com/v1/documents", accessToken, { title });
-  await googleJson(`https://docs.googleapis.com/v1/documents/${document.documentId}:batchUpdate`, accessToken, { requests: [{ insertText: { location: { index: 1 }, text: body } }] });
+const EXPORT_COLORS = {
+  ink: { red: 0.07, green: 0.16, blue: 0.15 },
+  teal: { red: 0, green: 0.35, blue: 0.3 },
+  cream: { red: 0.98, green: 0.97, blue: 0.92 },
+  paleTeal: { red: 0.91, green: 0.96, blue: 0.94 },
+  muted: { red: 0.34, green: 0.42, blue: 0.4 },
+  white: { red: 1, green: 1, blue: 1 },
+};
+
+export function buildGoogleDocRequests(template: GoogleDocTemplate): unknown[] {
+  const requests: unknown[] = [{ insertText: { location: { index: 1 }, text: template.blocks.map(block => `${block.text}\n`).join("") } }];
+  let cursor = 1;
+  template.blocks.forEach(block => {
+    const end = cursor + block.text.length;
+    const paragraphRange = { startIndex: cursor, endIndex: end + 1 };
+    if (block.kind === "title") {
+      requests.push({ updateParagraphStyle: { range: paragraphRange, paragraphStyle: { namedStyleType: "TITLE" }, fields: "namedStyleType" } });
+      requests.push({ updateTextStyle: { range: { startIndex: cursor, endIndex: end }, textStyle: { bold: true, foregroundColor: { color: { rgbColor: EXPORT_COLORS.ink } } }, fields: "bold,foregroundColor" } });
+    } else if (block.kind === "subtitle") {
+      requests.push({ updateParagraphStyle: { range: paragraphRange, paragraphStyle: { namedStyleType: "SUBTITLE" }, fields: "namedStyleType" } });
+      requests.push({ updateTextStyle: { range: { startIndex: cursor, endIndex: end }, textStyle: { foregroundColor: { color: { rgbColor: EXPORT_COLORS.teal } } }, fields: "foregroundColor" } });
+    } else if (block.kind === "heading") {
+      requests.push({ updateParagraphStyle: { range: paragraphRange, paragraphStyle: { namedStyleType: "HEADING_1" }, fields: "namedStyleType" } });
+    } else if (block.kind === "subheading") {
+      requests.push({ updateParagraphStyle: { range: paragraphRange, paragraphStyle: { namedStyleType: "HEADING_2" }, fields: "namedStyleType" } });
+    } else if (block.kind === "bullet") {
+      requests.push({ createParagraphBullets: { range: paragraphRange, bulletPreset: "BULLET_DISC_CIRCLE_SQUARE" } });
+    } else if (block.kind === "quote") {
+      requests.push({ updateParagraphStyle: { range: paragraphRange, paragraphStyle: { namedStyleType: "SUBTITLE" }, fields: "namedStyleType" } });
+      requests.push({ updateTextStyle: { range: { startIndex: cursor, endIndex: end }, textStyle: { foregroundColor: { color: { rgbColor: EXPORT_COLORS.muted } } }, fields: "foregroundColor" } });
+    }
+    if (block.kind === "sourceLink" && block.link) {
+      requests.push({ updateTextStyle: { range: { startIndex: cursor, endIndex: end }, textStyle: { link: { url: block.link }, foregroundColor: { color: { rgbColor: EXPORT_COLORS.teal } }, underline: true }, fields: "link,foregroundColor,underline" } });
+    }
+    cursor = end + 1;
+  });
+  return requests;
+}
+
+async function createGoogleDoc(accessToken: string, template: ReturnType<typeof buildGoogleDocTemplate>) {
+  const document = await googleJson<{ documentId: string }>("https://docs.googleapis.com/v1/documents", accessToken, { title: template.title });
+  await googleJson(`https://docs.googleapis.com/v1/documents/${document.documentId}:batchUpdate`, accessToken, { requests: buildGoogleDocRequests(template) });
   return { fileId: document.documentId, fileUrl: `https://docs.google.com/document/d/${document.documentId}/edit` };
 }
 
 async function createGoogleSheet(accessToken: string, template: ReturnType<typeof buildGoogleSheetTemplate>) {
-  const spreadsheet = await googleJson<{ spreadsheetId: string }>("https://sheets.googleapis.com/v4/spreadsheets", accessToken, { properties: { title: template.title }, sheets: template.sheets.map(sheet => ({ properties: { title: sheet.name } })) });
-  await googleJson(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheet.spreadsheetId}/values:batchUpdate`, accessToken, { valueInputOption: "RAW", data: template.sheets.map(sheet => ({ range: `'${sheet.name}'!A1`, majorDimension: "ROWS", values: sheet.rows })) });
+  const spreadsheet = await googleJson<{ spreadsheetId: string; sheets?: Array<{ properties?: { sheetId?: number; title?: string } }> }>("https://sheets.googleapis.com/v4/spreadsheets", accessToken, { properties: { title: template.title }, sheets: template.sheets.map(sheet => ({ properties: { title: sheet.name } })) });
+  await googleJson(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheet.spreadsheetId}/values:batchUpdate`, accessToken, { valueInputOption: "USER_ENTERED", data: template.sheets.map(sheet => ({ range: `'${sheet.name}'!A1`, majorDimension: "ROWS", values: sheet.rows })) });
+  const sheetIds = new Map(spreadsheet.sheets?.flatMap(sheet => typeof sheet.properties?.sheetId === "number" && sheet.properties.title ? [[sheet.properties.title, sheet.properties.sheetId] as const] : []) ?? []);
+  const requests: unknown[] = [];
+  template.sheets.forEach((sheet, index) => {
+    const sheetId = sheetIds.get(sheet.name) ?? index;
+    const rowCount = Math.max(sheet.rows.length, 2);
+    const columnCount = Math.max(sheet.rows[0]?.length ?? 0, 1);
+    const fullRange = { sheetId, startRowIndex: 0, endRowIndex: rowCount, startColumnIndex: 0, endColumnIndex: columnCount };
+    requests.push(
+      { updateSheetProperties: { properties: { sheetId, gridProperties: { frozenRowCount: 1 } }, fields: "gridProperties.frozenRowCount" } },
+      { addBanding: { bandedRange: { range: fullRange, rowProperties: { headerColor: EXPORT_COLORS.teal, firstBandColor: EXPORT_COLORS.white, secondBandColor: EXPORT_COLORS.paleTeal } } } },
+      { repeatCell: { range: { sheetId, startRowIndex: 0, endRowIndex: 1, startColumnIndex: 0, endColumnIndex: columnCount }, cell: { userEnteredFormat: { backgroundColor: EXPORT_COLORS.teal, textFormat: { bold: true, foregroundColor: EXPORT_COLORS.white }, horizontalAlignment: "CENTER", verticalAlignment: "MIDDLE", wrapStrategy: "WRAP" } }, fields: "userEnteredFormat.backgroundColor,userEnteredFormat.textFormat,userEnteredFormat.horizontalAlignment,userEnteredFormat.verticalAlignment,userEnteredFormat.wrapStrategy" } },
+      { repeatCell: { range: { sheetId, startRowIndex: 1, endRowIndex: rowCount, startColumnIndex: 0, endColumnIndex: columnCount }, cell: { userEnteredFormat: { verticalAlignment: "TOP", wrapStrategy: "WRAP" } }, fields: "userEnteredFormat.verticalAlignment,userEnteredFormat.wrapStrategy" } },
+    );
+    sheet.columnWidths.forEach((pixelSize, columnIndex) => requests.push({ updateDimensionProperties: { range: { sheetId, dimension: "COLUMNS", startIndex: columnIndex, endIndex: columnIndex + 1 }, properties: { pixelSize }, fields: "pixelSize" } }));
+  });
+  await googleJson(`https://sheets.googleapis.com/v4/spreadsheets/${spreadsheet.spreadsheetId}:batchUpdate`, accessToken, { requests });
   return { fileId: spreadsheet.spreadsheetId, fileUrl: `https://docs.google.com/spreadsheets/d/${spreadsheet.spreadsheetId}/edit` };
 }
 
@@ -195,12 +250,28 @@ async function createGoogleSlides(accessToken: string, template: ReturnType<type
     const pageObjectId = `researchos_slide_${index}`;
     const titleObjectId = `researchos_title_${index}`;
     const bodyObjectId = `researchos_body_${index}`;
+    const sourceObjectId = `researchos_sources_${index}`;
+    const isCover = slide.layout === "cover";
+    const isAppendix = slide.layout === "appendix";
+    const bodyText = isCover ? [slide.subtitle, ...slide.bullets].filter(Boolean).join("\n\n") : slide.bullets.join("\n");
+    const sourceText = isAppendix
+      ? "Full source links are listed in the appendix."
+      : slide.sourceUrls.length
+        ? `Evidence sources: ${slide.sourceUrls.slice(0, 2).map(url => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return url; } }).join(" · ")}${slide.sourceUrls.length > 2 ? ` +${slide.sourceUrls.length - 2} more` : ""}`
+        : "ResearchOS · evidence-led decision brief";
     requests.push(
       { createSlide: { objectId: pageObjectId } },
-      { createShape: { objectId: titleObjectId, shapeType: "TEXT_BOX", elementProperties: { pageObjectId, size: { width: { magnitude: 8_300_000, unit: "EMU" }, height: { magnitude: 650_000, unit: "EMU" } }, transform: { scaleX: 1, scaleY: 1, translateX: 500_000, translateY: 300_000, unit: "EMU" } } } },
+      { updatePageProperties: { objectId: pageObjectId, pageProperties: { pageBackgroundFill: { solidFill: { color: { rgbColor: EXPORT_COLORS.cream } } } }, fields: "pageBackgroundFill.solidFill.color" } },
+      { createShape: { objectId: titleObjectId, shapeType: "TEXT_BOX", elementProperties: { pageObjectId, size: { width: { magnitude: 8_300_000, unit: "EMU" }, height: { magnitude: isCover ? 1_100_000 : 700_000, unit: "EMU" } }, transform: { scaleX: 1, scaleY: 1, translateX: 500_000, translateY: 330_000, unit: "EMU" } } } },
       { insertText: { objectId: titleObjectId, text: slide.title } },
-      { createShape: { objectId: bodyObjectId, shapeType: "TEXT_BOX", elementProperties: { pageObjectId, size: { width: { magnitude: 8_300_000, unit: "EMU" }, height: { magnitude: 4_700_000, unit: "EMU" } }, transform: { scaleX: 1, scaleY: 1, translateX: 500_000, translateY: 1_250_000, unit: "EMU" } } } },
-      { insertText: { objectId: bodyObjectId, text: [slide.subtitle, ...slide.bullets, slide.sourceUrls.length ? `Sources: ${slide.sourceUrls.join(" · ")}` : ""].filter(Boolean).join("\n\n") } },
+      { updateTextStyle: { objectId: titleObjectId, textRange: { type: "ALL" }, style: { fontFamily: "Georgia", fontSize: { magnitude: isCover ? 34 : 26, unit: "PT" }, bold: true, foregroundColor: { opaqueColor: { rgbColor: EXPORT_COLORS.ink } } }, fields: "fontFamily,fontSize,bold,foregroundColor" } },
+      { createShape: { objectId: bodyObjectId, shapeType: "TEXT_BOX", elementProperties: { pageObjectId, size: { width: { magnitude: 8_300_000, unit: "EMU" }, height: { magnitude: isCover ? 4_400_000 : isAppendix ? 4_850_000 : 4_450_000, unit: "EMU" } }, transform: { scaleX: 1, scaleY: 1, translateX: 500_000, translateY: isCover ? 1_850_000 : 1_300_000, unit: "EMU" } } } },
+      { insertText: { objectId: bodyObjectId, text: bodyText || "No retained evidence for this section." } },
+      { updateTextStyle: { objectId: bodyObjectId, textRange: { type: "ALL" }, style: { fontFamily: "Aptos", fontSize: { magnitude: isCover ? 20 : isAppendix ? 12 : 17, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: EXPORT_COLORS.ink } } }, fields: "fontFamily,fontSize,foregroundColor" } },
+      ...(isCover || isAppendix ? [] : [{ createParagraphBullets: { objectId: bodyObjectId, textRange: { type: "ALL" }, bulletPreset: "BULLET_DISC_CIRCLE_SQUARE" } }]),
+      { createShape: { objectId: sourceObjectId, shapeType: "TEXT_BOX", elementProperties: { pageObjectId, size: { width: { magnitude: 8_300_000, unit: "EMU" }, height: { magnitude: 330_000, unit: "EMU" } }, transform: { scaleX: 1, scaleY: 1, translateX: 500_000, translateY: 6_850_000, unit: "EMU" } } } },
+      { insertText: { objectId: sourceObjectId, text: sourceText } },
+      { updateTextStyle: { objectId: sourceObjectId, textRange: { type: "ALL" }, style: { fontFamily: "Aptos", fontSize: { magnitude: 9, unit: "PT" }, foregroundColor: { opaqueColor: { rgbColor: EXPORT_COLORS.muted } } }, fields: "fontFamily,fontSize,foregroundColor" } },
     );
   });
   await googleJson(`https://slides.googleapis.com/v1/presentations/${presentation.presentationId}:batchUpdate`, accessToken, { requests });
@@ -210,7 +281,7 @@ async function createGoogleSlides(accessToken: string, template: ReturnType<type
 export async function generateGoogleWorkspaceExport(input: { sessionId: string; userId: number; destination: GoogleExportDestination }) {
   const [artifact, accessToken] = await Promise.all([artifactForSession(input.sessionId, input.userId), googleAccessToken(input.userId)]);
   const result = input.destination === "google_doc"
-    ? await createGoogleDoc(accessToken, buildGoogleDocTemplate(artifact).title, buildGoogleDocTemplate(artifact).body)
+    ? await createGoogleDoc(accessToken, buildGoogleDocTemplate(artifact))
     : input.destination === "google_sheet"
       ? await createGoogleSheet(accessToken, buildGoogleSheetTemplate(artifact))
       : await createGoogleSlides(accessToken, buildGoogleSlidesTemplate(artifact));

@@ -127,3 +127,7 @@
 - [x] Build Docs and Sheets templates from the canonical decision artifact, including traceable source links and a decision-ready recommendation section.
 - [x] Design the Slides-ready narrative template and preserve an auditable source appendix for leadership review.
 - [ ] Improve Google Workspace export formatting — better document structure, typography, section headers, and evidence layout for Docs, Sheets, and Slides deliverables.
+- [x] Format Google Docs exports with semantic heading levels, styled executive-summary callouts, native bullet lists, and readable source-ledger links.
+- [x] Format Google Sheets exports with frozen and styled headers, column sizing, wrapped evidence text, alternating evidence rows, and source-link usability.
+- [x] Format Google Slides exports with a consistent title hierarchy, readable body typography, evidence footers, and a legible source appendix layout.
+- [ ] Add regression coverage for export-format request construction and validate refreshed Docs, Sheets, and Slides from a completed research brief.
