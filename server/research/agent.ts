@@ -14,7 +14,7 @@ import {
   updateResearchStepDetails,
 } from "../db";
 import { searchPublicWeb } from "./search";
-import { chooseResearchModel, invokeResearchLLM } from "./llmProvider";
+import { chooseResearchModel, invokeResearchLLM, providerAttemptsFromError } from "./llmProvider";
 import { scoreResearchSource } from "./sourceQuality";
 import type { AgentFinding, ResearchIntent, ResearchPlanStep, ResearchProgressEvent } from "./types";
 
@@ -453,6 +453,7 @@ export async function runResearchSession(input: {
       lifecyclePhase,
       lifecycleProgress,
       lifecycleMessage,
+      providerDiagnosticsJson: JSON.stringify(providerAttemptsFromError(error)),
     });
     emit(input.emit, { type: "error", sessionId: input.sessionId, message });
   }

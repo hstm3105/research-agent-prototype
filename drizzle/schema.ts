@@ -36,6 +36,7 @@ export const researchSessions = mysqlTable("researchSessions", {
   lifecyclePhase: varchar("lifecyclePhase", { length: 64 }),
   lifecycleProgress: int("lifecycleProgress"),
   lifecycleMessage: text("lifecycleMessage"),
+  providerDiagnosticsJson: text("providerDiagnosticsJson"),
   broadenedFromSessionId: varchar("broadenedFromSessionId", { length: 48 }),
   createdAt: timestamp("createdAt").defaultNow().notNull(),
   updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),

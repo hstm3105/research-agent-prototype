@@ -1,52 +1,63 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-
-const builtin = vi.hoisted(() => ({ invokeLLM: vi.fn(), listLLMModels: vi.fn() }));
-vi.mock("../_core/llm", () => builtin);
-
-import { chooseResearchModel, clearOpenRouterModelCacheForTests, invokeResearchLLM } from "./llmProvider";
+import { chooseResearchModel, GEMINI_RESEARCH_MODELS, invokeResearchLLM, providerAttemptsFromError } from "./llmProvider";
 
 const originalFetch = global.fetch;
-const originalApiKey = process.env.OPENROUTER_API_KEY;
+const originalApiKey = process.env.GEMINI_API_KEY;
 
 afterEach(() => {
   global.fetch = originalFetch;
-  process.env.OPENROUTER_API_KEY = originalApiKey;
-  builtin.invokeLLM.mockReset();
-  builtin.listLLMModels.mockReset();
-  clearOpenRouterModelCacheForTests();
+  process.env.GEMINI_API_KEY = originalApiKey;
 });
 
-describe("OpenRouter research provider", () => {
-  it("selects a current preferred model and requires structured-output support for schema calls", async () => {
-    process.env.OPENROUTER_API_KEY = "sk-or-v1-test";
+describe("Gemini research provider", () => {
+  it("uses gemini-3.5-flash-lite with Gemini structured-output request shaping", async () => {
+    process.env.GEMINI_API_KEY = "test-key";
+    global.fetch = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text: "{}" }] }, finishReason: "STOP" }],
+      usageMetadata: { promptTokenCount: 5, candidatesTokenCount: 1, totalTokenCount: 6 },
+    }), { status: 200 })) as typeof fetch;
+
+    expect(await chooseResearchModel()).toBe("gemini-3.5-flash-lite");
+    await invokeResearchLLM({
+      messages: [{ role: "system", content: "Return JSON." }, { role: "user", content: "Confirm connection." }],
+      response_format: { type: "json_schema", json_schema: { name: "result", strict: true, schema: { type: "object", properties: {}, additionalProperties: false } } },
+    });
+
+    const [url, init] = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(url).toBe("https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash-lite:generateContent");
+    expect(init.headers).toMatchObject({ "x-goog-api-key": "test-key" });
+    expect(JSON.parse(init.body)).toMatchObject({
+      systemInstruction: { parts: [{ text: "Return JSON." }] },
+      contents: [{ role: "user", parts: [{ text: "Confirm connection." }] }],
+      generationConfig: { responseMimeType: "application/json" },
+    });
+    expect(JSON.parse(init.body).generationConfig.responseSchema).not.toHaveProperty("additionalProperties");
+  });
+
+  it("uses gemini-3.1-flash-lite when the primary Gemini model is unavailable", async () => {
+    process.env.GEMINI_API_KEY = "test-key";
     global.fetch = vi.fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({ data: [{ id: "openai/gpt-5.5", supported_parameters: ["structured_outputs"] }] }), { status: 200 }))
-      .mockResolvedValueOnce(new Response(JSON.stringify({ id: "chat-1", created: 1, model: "openai/gpt-5.5", choices: [{ index: 0, message: { role: "assistant", content: "{}" }, finish_reason: "stop" }] }), { status: 200 })) as typeof fetch;
+      .mockResolvedValueOnce(new Response("unavailable", { status: 503, statusText: "Service Unavailable" }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ candidates: [{ content: { parts: [{ text: "fallback" }] }, finishReason: "STOP" }] }), { status: 200 })) as typeof fetch;
 
-    expect(await chooseResearchModel()).toBe("openai/gpt-5.5");
-    await invokeResearchLLM({ model: "openai/gpt-5.5", messages: [{ role: "system", content: "Return JSON." }], response_format: { type: "json_schema", json_schema: { name: "result", strict: true, schema: { type: "object", properties: {}, additionalProperties: false } } } });
+    const result = await invokeResearchLLM({ messages: [{ role: "user", content: "Continue research." }] });
 
-    const request = (global.fetch as ReturnType<typeof vi.fn>).mock.calls[1];
-    expect(request[0]).toBe("https://openrouter.ai/api/v1/chat/completions");
-    expect(JSON.parse(request[1].body)).toMatchObject({ model: "openai/gpt-5.5", provider: { require_parameters: true }, response_format: { type: "json_schema" } });
+    expect(result.model).toBe("gemini-3.1-flash-lite");
+    expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls).toHaveLength(2);
+    expect((global.fetch as ReturnType<typeof vi.fn>).mock.calls[1][0]).toContain(GEMINI_RESEARCH_MODELS[1]);
   });
 
-  it("falls back to the built-in provider if the OpenRouter request is unavailable", async () => {
-    process.env.OPENROUTER_API_KEY = "sk-or-v1-test";
-    global.fetch = vi.fn().mockResolvedValue(new Response("maintenance", { status: 503, statusText: "Service Unavailable" })) as typeof fetch;
-    builtin.invokeLLM.mockResolvedValue({ id: "builtin-1", created: 1, model: "gpt-5", choices: [{ index: 0, message: { role: "assistant", content: "fallback" }, finish_reason: "stop" }] });
+  it("emits the preserved-work sentinel if both requested Gemini models fail", async () => {
+    process.env.GEMINI_API_KEY = "test-key";
+    global.fetch = vi.fn()
+      .mockResolvedValueOnce(new Response("unavailable", { status: 503, statusText: "Service Unavailable" }))
+      .mockResolvedValueOnce(new Response("unavailable", { status: 503, statusText: "Service Unavailable" })) as typeof fetch;
 
-    const result = await invokeResearchLLM({ model: "openai/gpt-5.5", messages: [{ role: "user", content: "Continue research." }] });
-
-    expect(result.choices[0].message.content).toBe("fallback");
-    expect(builtin.invokeLLM).toHaveBeenCalledOnce();
-  });
-
-  it("uses a sentinel rather than raw provider errors when neither provider is available", async () => {
-    process.env.OPENROUTER_API_KEY = "sk-or-v1-test";
-    global.fetch = vi.fn().mockResolvedValue(new Response("maintenance", { status: 503, statusText: "Service Unavailable" })) as typeof fetch;
-    builtin.invokeLLM.mockRejectedValue(new Error("Built-in provider internal detail"));
-
-    await expect(invokeResearchLLM({ model: "openai/gpt-5.5", messages: [{ role: "user", content: "Continue research." }] })).rejects.toThrow("AI_PROVIDERS_UNAVAILABLE");
+    const failure = await invokeResearchLLM({ messages: [{ role: "user", content: "Continue research." }] }).catch(error => error);
+    expect(failure).toHaveProperty("message", "AI_PROVIDERS_UNAVAILABLE");
+    expect(providerAttemptsFromError(failure)).toEqual([
+      { provider: "gemini", model: "gemini-3.5-flash-lite", outcome: "failed", errorClass: "http_503", httpStatus: 503 },
+      { provider: "gemini", model: "gemini-3.1-flash-lite", outcome: "failed", errorClass: "http_503", httpStatus: 503 },
+    ]);
   });
 });

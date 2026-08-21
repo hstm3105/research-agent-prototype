@@ -1,0 +1,1 @@
+ALTER TABLE `researchSessions` ADD `providerDiagnosticsJson` text;

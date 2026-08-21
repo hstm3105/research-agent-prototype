@@ -20,6 +20,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock("../db", () => mocks.db);
 vi.mock("../_core/llm", () => mocks.llm);
+vi.mock("./llmProvider", () => ({
+  invokeResearchLLM: mocks.llm.invokeLLM,
+  chooseResearchModel: async () => "gemini-3.5-flash-lite",
+}));
 vi.mock("./search", () => mocks.search);
 
 import { runResearchSession } from "./agent";

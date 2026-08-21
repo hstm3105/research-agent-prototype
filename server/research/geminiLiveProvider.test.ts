@@ -1,12 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { invokeOpenRouter } from "./llmProvider";
+import { invokeGemini } from "./llmProvider";
 
-describe("OpenRouter live provider", () => {
-  const runLiveTest = process.env.RUN_OPENROUTER_LIVE_TEST === "1";
+describe("Gemini live provider", () => {
+  const runLiveTest = process.env.RUN_GEMINI_LIVE_TEST === "1";
 
-  it.skipIf(!runLiveTest)("returns a structured response from a live OpenRouter model", async () => {
-    const response = await invokeOpenRouter({
-      model: "openai/gpt-5.4-nano",
+  it.skipIf(!runLiveTest)("returns structured JSON from gemini-3.5-flash-lite", async () => {
+    const response = await invokeGemini({
       messages: [
         { role: "system", content: "Return only the requested JSON object." },
         { role: "user", content: "Confirm the provider connection." },
@@ -25,7 +24,7 @@ describe("OpenRouter live provider", () => {
           },
         },
       },
-    });
+    }, "gemini-3.5-flash-lite");
 
     expect(JSON.parse(response.choices[0]?.message.content as string)).toEqual({ connected: true });
   }, 30_000);

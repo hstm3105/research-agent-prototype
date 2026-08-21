@@ -22,6 +22,7 @@ vi.mock("../db", () => mocks.db);
 vi.mock("../_core/llm", () => mocks.llm);
 vi.mock("./llmProvider", () => ({
   invokeResearchLLM: mocks.llm.invokeLLM,
+  providerAttemptsFromError: (error: unknown) => error && typeof error === "object" && "attempts" in error ? (error as { attempts: unknown[] }).attempts : [],
   chooseResearchModel: async () => {
     const models = await mocks.llm.listLLMModels();
     return models.data.find((model: { id: string }) => model.id === "gpt-5")?.id ?? models.data[0]?.id;
@@ -273,12 +274,18 @@ describe("runResearchSession adaptive-plan contract", () => {
     );
   });
 
-  it("preserves the research session when both LLM providers are unavailable", async () => {
+  it("persists safe Gemini attempts while preserving the generic recovery state", async () => {
     vi.clearAllMocks();
     mocks.db.getResearchSessionForUser.mockResolvedValue({ id: "session-dual-outage", query: "Research a topic", status: "draft" });
     mocks.db.listResearchSteps.mockResolvedValue([]);
     mocks.llm.listLLMModels.mockReset().mockResolvedValue({ data: [{ id: "gpt-5" }] });
-    mocks.llm.invokeLLM.mockReset().mockRejectedValueOnce(new Error("AI_PROVIDERS_UNAVAILABLE"));
+    const outage = Object.assign(new Error("AI_PROVIDERS_UNAVAILABLE"), {
+      attempts: [
+        { provider: "gemini", model: "gemini-3.5-flash-lite", outcome: "failed", errorClass: "http_429", httpStatus: 429 },
+        { provider: "gemini", model: "gemini-3.1-flash-lite", outcome: "failed", errorClass: "http_429", httpStatus: 429 },
+      ],
+    });
+    mocks.llm.invokeLLM.mockReset().mockRejectedValueOnce(outage);
 
     await runResearchSession({ sessionId: "session-dual-outage", userId: 1, emit: vi.fn() });
 
@@ -291,6 +298,7 @@ describe("runResearchSession adaptive-plan contract", () => {
         lifecyclePhase: "planning",
         lifecycleProgress: 8,
         lifecycleMessage: "Interpreting the research objective and choosing the right evidence format.",
+        providerDiagnosticsJson: JSON.stringify(outage.attempts),
       })
     );
   });

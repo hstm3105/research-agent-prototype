@@ -74,3 +74,14 @@
 - [x] Add regression coverage for dual-provider failure and its preserved-work recovery message in the research workflow.
 - [x] Add orchestration coverage that persists the existing preserved-work recovery state when both OpenRouter and the built-in provider fail during research execution.
 - [x] Add rendered coverage confirming a dual-provider outage surfaces the existing preserved-work recovery panel rather than provider details.
+- [x] Capture the failed research session, OpenRouter response status, built-in fallback result, and runtime logs to identify the AI-service outage root cause.
+- [x] Repair the provider-selection or request contract causing the unavailable state, with precise retry/fallback behavior that preserves completed work.
+- [x] Add regression coverage for the observed production failure and verify a live research run progresses beyond planning using the repaired provider path.
+- [x] Remove the OpenRouter secret, provider adapter, model selection, live tests, and related configuration from ResearchOS.
+- [x] Add a secure server-only Gemini provider using gemini-3.5-flash-lite first and gemini-3.1-flash-lite as the fallback model for research planning, adaptation, and synthesis.
+- [x] Validate the Gemini credential and a live structured research-provider request, then verify research resumes beyond planning without exposing provider internals.
+- [x] Document the exact prior provider failure sequence from the persisted session evidence and record the repaired Gemini request contract that prevents the same outage.
+- [x] Run a live Gemini-backed research session through a real execution step beyond planning and add workflow-level regression coverage for the repaired path.
+- [x] Verify a resumed failed session advances beyond planning on Gemini while provider outages still expose only the non-technical preserved-work recovery state.
+- [x] Persist non-secret Gemini provider-attempt telemetry, including model, error class or HTTP status, and fallback outcome, for exact future outage diagnosis.
+- [x] Add regression coverage that records provider diagnostics server-side while retaining the existing non-technical preserved-work user message.

@@ -143,7 +143,7 @@ describe("Home active-session clarification flow", () => {
 
     await user.click(screen.getByRole("button", { name: /open active session/i }));
     expect(await screen.findByLabelText("AI service recovery")).toBeTruthy();
-    expect(screen.queryByText(/OpenRouter invoke failed|fallback unavailable|AI_PROVIDERS_UNAVAILABLE/i)).toBeNull();
+    expect(screen.queryByText(/Gemini invoke failed|AI_PROVIDERS_UNAVAILABLE/i)).toBeNull();
   });
 
   it("offers sparse-evidence broadening, transparent source signals, and revocable sharing on a completed brief", async () => {

@@ -50,6 +50,13 @@
       "when": 1787295531047,
       "tag": "0006_tan_ghost_rider",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "5",
+      "when": 1787298564683,
+      "tag": "0007_polite_captain_britain",
+      "breakpoints": true
     }
   ]
 }

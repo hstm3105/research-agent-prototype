@@ -1,92 +1,140 @@
-import { invokeLLM, listLLMModels, type InvokeParams, type InvokeResult } from "../_core/llm";
+import type { InvokeParams, InvokeResult, MessageContent, ResponseFormat } from "../_core/llm";
 
-const OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1";
-const OPENROUTER_MODEL_PREFERENCES = ["openai/gpt-5.5", "openai/gpt-5.4-mini", "openai/gpt-5.4-nano"];
-const MODEL_CACHE_MS = 5 * 60 * 1000;
+const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta";
+export const GEMINI_RESEARCH_MODELS = ["gemini-3.5-flash-lite", "gemini-3.1-flash-lite"] as const;
 
-type OpenRouterModel = { id: string; supported_parameters?: string[] };
-let cachedOpenRouterModel: { value: string; expiresAt: number } | null = null;
+export type GeminiProviderAttempt = {
+  provider: "gemini";
+  model: string;
+  outcome: "failed";
+  errorClass: string;
+  httpStatus?: number;
+};
 
-function openRouterApiKey() {
-  return process.env.OPENROUTER_API_KEY?.trim() || null;
+export class ResearchProviderUnavailableError extends Error {
+  constructor(readonly attempts: GeminiProviderAttempt[]) {
+    super("AI_PROVIDERS_UNAVAILABLE");
+  }
 }
 
-function hasStructuredResponse(params: InvokeParams) {
-  return params.response_format?.type === "json_schema" || params.responseFormat?.type === "json_schema" || Boolean(params.outputSchema || params.output_schema);
+function geminiApiKey() {
+  return process.env.GEMINI_API_KEY?.trim() || null;
 }
 
-function responseFormatFor(params: InvokeParams) {
+function textFromContent(content: MessageContent | MessageContent[]): string {
+  const parts = Array.isArray(content) ? content : [content];
+  return parts.map(part => typeof part === "string" ? part : part.type === "text" ? part.text : JSON.stringify(part)).join("\n");
+}
+
+function responseFormatFor(params: InvokeParams): ResponseFormat | undefined {
   if (params.response_format) return params.response_format;
   if (params.responseFormat) return params.responseFormat;
   const schema = params.outputSchema || params.output_schema;
-  return schema ? { type: "json_schema" as const, json_schema: schema } : undefined;
+  return schema ? { type: "json_schema", json_schema: schema } : undefined;
 }
 
-export async function chooseResearchModel(): Promise<string | undefined> {
-  const apiKey = openRouterApiKey();
-  if (!apiKey) {
-    const builtinModels = await listLLMModels();
-    return builtinModels.data.find(model => model.id === "gpt-5")?.id
-      ?? builtinModels.data.find(model => /sonnet|gpt-5/i.test(model.id))?.id
-      ?? builtinModels.data[0]?.id;
-  }
-
-  if (cachedOpenRouterModel && cachedOpenRouterModel.expiresAt > Date.now()) return cachedOpenRouterModel.value;
-  const response = await fetch(`${OPENROUTER_BASE_URL}/models`, { headers: { Authorization: `Bearer ${apiKey}` } });
-  if (!response.ok) throw new Error(`OpenRouter model discovery failed: ${response.status} ${response.statusText}`);
-  const payload = await response.json() as { data?: OpenRouterModel[] };
-  const models = Array.isArray(payload.data) ? payload.data : [];
-  const available = new Set(models.map(model => model.id));
-  const preferred = OPENROUTER_MODEL_PREFERENCES.find(model => available.has(model));
-  const structured = models.find(model => !model.id.includes(":batch") && model.supported_parameters?.includes("structured_outputs"))?.id;
-  const selected = preferred ?? structured ?? models.find(model => !model.id.includes(":batch"))?.id;
-  if (!selected) throw new Error("OpenRouter returned no available chat models");
-  cachedOpenRouterModel = { value: selected, expiresAt: Date.now() + MODEL_CACHE_MS };
-  return selected;
+function toGeminiResponseSchema(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(toGeminiResponseSchema);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(
+    Object.entries(value as Record<string, unknown>)
+      .filter(([key]) => key !== "additionalProperties" && key !== "$schema")
+      .map(([key, entry]) => [key, toGeminiResponseSchema(entry)])
+  );
 }
 
-export async function invokeOpenRouter(params: InvokeParams): Promise<InvokeResult> {
-  const apiKey = openRouterApiKey();
-  if (!apiKey) throw new Error("OPENROUTER_API_KEY is not configured");
-  const model = params.model ?? await chooseResearchModel();
+function toGeminiRequest(params: InvokeParams) {
+  const systemText = params.messages.filter(message => message.role === "system").map(message => textFromContent(message.content)).join("\n\n");
+  const contents = params.messages.filter(message => message.role !== "system").map(message => ({
+    role: message.role === "assistant" ? "model" : "user",
+    parts: [{ text: textFromContent(message.content) }],
+  }));
   const responseFormat = responseFormatFor(params);
-  const payload: Record<string, unknown> = {
-    model,
-    messages: params.messages,
-    ...(params.tools?.length ? { tools: params.tools } : {}),
-    ...(params.toolChoice || params.tool_choice ? { tool_choice: params.toolChoice || params.tool_choice } : {}),
-    ...(params.max_tokens ?? params.maxTokens ? { max_tokens: params.max_tokens ?? params.maxTokens } : {}),
-    ...(params.thinking ? { thinking: params.thinking } : {}),
-    ...(params.reasoning ? { reasoning: params.reasoning } : {}),
-    ...(responseFormat ? { response_format: responseFormat } : {}),
-    ...(hasStructuredResponse(params) ? { provider: { require_parameters: true } } : {}),
+  const generationConfig: Record<string, unknown> = {
+    ...(params.max_tokens ?? params.maxTokens ? { maxOutputTokens: params.max_tokens ?? params.maxTokens } : {}),
+    ...(responseFormat?.type === "json_schema" ? {
+      responseMimeType: "application/json",
+      responseSchema: toGeminiResponseSchema(responseFormat.json_schema.schema),
+    } : responseFormat?.type === "json_object" ? {
+      responseMimeType: "application/json",
+    } : {}),
   };
-  const response = await fetch(`${OPENROUTER_BASE_URL}/chat/completions`, {
+
+  return {
+    ...(systemText ? { systemInstruction: { parts: [{ text: systemText }] } } : {}),
+    contents,
+    ...(Object.keys(generationConfig).length ? { generationConfig } : {}),
+  };
+}
+
+type GeminiResponse = {
+  candidates?: Array<{
+    content?: { parts?: Array<{ text?: string }> };
+    finishReason?: string;
+  }>;
+  usageMetadata?: { promptTokenCount?: number; candidatesTokenCount?: number; totalTokenCount?: number };
+};
+
+export async function chooseResearchModel() {
+  return GEMINI_RESEARCH_MODELS[0];
+}
+
+export async function invokeGemini(params: InvokeParams, model: string): Promise<InvokeResult> {
+  const apiKey = geminiApiKey();
+  if (!apiKey) throw new Error("GEMINI_API_KEY is not configured");
+  const response = await fetch(`${GEMINI_BASE_URL}/models/${model}:generateContent`, {
     method: "POST",
-    headers: { "content-type": "application/json", Authorization: `Bearer ${apiKey}` },
-    body: JSON.stringify(payload),
+    headers: { "content-type": "application/json", "x-goog-api-key": apiKey },
+    body: JSON.stringify(toGeminiRequest(params)),
   });
   if (!response.ok) {
     const detail = await response.text();
-    throw new Error(`OpenRouter invoke failed: ${response.status} ${response.statusText} – ${detail}`);
+    throw new Error(`Gemini invoke failed: ${response.status} ${response.statusText} – ${detail}`);
   }
-  return await response.json() as InvokeResult;
+  const payload = await response.json() as GeminiResponse;
+  const candidate = payload.candidates?.[0];
+  const content = candidate?.content?.parts?.map(part => part.text ?? "").join("") || "";
+  if (!content) throw new Error("Gemini returned an empty response");
+  return {
+    id: `gemini-${Date.now()}`,
+    created: Math.floor(Date.now() / 1000),
+    model,
+    choices: [{ index: 0, message: { role: "assistant", content }, finish_reason: candidate?.finishReason ?? "stop" }],
+    usage: payload.usageMetadata ? {
+      prompt_tokens: payload.usageMetadata.promptTokenCount ?? 0,
+      completion_tokens: payload.usageMetadata.candidatesTokenCount ?? 0,
+      total_tokens: payload.usageMetadata.totalTokenCount ?? 0,
+    } : undefined,
+  };
 }
 
-/** Uses OpenRouter as the primary research provider and retains Manus for resilience. */
+function toAttempt(model: string, error: unknown): GeminiProviderAttempt {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  const statusMatch = message.match(/Gemini invoke failed:\s*(\d{3})/i);
+  const httpStatus = statusMatch ? Number(statusMatch[1]) : undefined;
+  return {
+    provider: "gemini",
+    model,
+    outcome: "failed",
+    errorClass: httpStatus ? `http_${httpStatus}` : /empty response/i.test(message) ? "empty_response" : "network_or_runtime_error",
+    ...(httpStatus ? { httpStatus } : {}),
+  };
+}
+
+export function providerAttemptsFromError(error: unknown): GeminiProviderAttempt[] {
+  return error instanceof ResearchProviderUnavailableError ? error.attempts : [];
+}
+
+/** Uses the requested Gemini Flash-Lite models only, with ordered model fallback. */
 export async function invokeResearchLLM(params: InvokeParams): Promise<InvokeResult> {
-  if (!openRouterApiKey()) return invokeLLM(params);
-  try {
-    return await invokeOpenRouter(params);
-  } catch (openRouterError) {
+  const attempts: GeminiProviderAttempt[] = [];
+  for (const model of GEMINI_RESEARCH_MODELS) {
     try {
-      return await invokeLLM(params);
-    } catch {
-      throw new Error("AI_PROVIDERS_UNAVAILABLE");
+      return await invokeGemini({ ...params, model }, model);
+    } catch (error) {
+      attempts.push(toAttempt(model, error));
+      // The secondary Gemini model is a purposeful provider-level fallback.
     }
   }
-}
-
-export function clearOpenRouterModelCacheForTests() {
-  cachedOpenRouterModel = null;
+  throw new ResearchProviderUnavailableError(attempts);
 }
