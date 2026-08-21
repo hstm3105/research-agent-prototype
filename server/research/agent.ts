@@ -304,16 +304,6 @@ export async function synthesizeResearchBrief(input: {
   }));
   const sources = Array.from(new Map(input.sources.map(source => [source.url, source])).values()).slice(0, 10).map(source => ({ title: source.title, url: source.url, publisher: source.publisher, excerpt: source.excerpt }));
   if (isRecommendationResearch(input.intent)) {
-    let groundingUnavailable = false;
-    try {
-      const grounded = await invokeGroundedRecommendationResearch({
-        request: `Act as a senior research IC delivering a decision-ready local recommendation brief. Request: ${input.intent.researchGoal}\n\nUse Google Search to find a diverse shortlist of at least three distinct, publicly verifiable named options when the evidence supports it. First infer the real decision criteria from the request. For each option, extract only source-supported details for atmosphere or design cue, area or location context when available, food/drink or experience focus, best use case, and caveats. Do not repeat the same venue, do not substitute generic categories for named options, and do not invent venue details. If fewer than three distinct named options are verifiable, return an empty options list.\n\nReturn ONLY valid JSON with this exact shape: {"criteria":["criterion"],"options":[{"rank":1,"name":"option name","summary":"one sentence","strengths":["source-supported strength"],"caveats":["source-supported caveat or qualified uncertainty"],"evidence":[{"claim":"specific source-supported fact","sourceUrls":["exact grounded citation URL"]}]}],"selectionAdvice":"how to choose among the options"}. Include at least two criteria, three options, one strength, and one source-linked evidence item for each option. In sourceUrls, use only the exact URLs provided by Google Search grounding.`,
-      });
-      const recommendation = grounded.sources.length >= 3 ? parseGroundedRecommendationBrief(grounded.output, grounded.sources) : null;
-      if (recommendation) return { output: renderStructuredRecommendationMarkdown(recommendation, grounded.sources), groundedSources: grounded.sources, recommendation, sourceAttribution: "Gemini Google Search grounding" };
-    } catch {
-      groundingUnavailable = true;
-    }
     if (isLocalVenueRecommendation(input.intent)) {
       try {
         const placeSources = await searchLocalRecommendationPlaces(input.intent.researchGoal);
@@ -326,8 +316,18 @@ export async function synthesizeResearchBrief(input: {
           sourceAttribution: "Google Maps Places evidence",
         };
       } catch {
-        // Local venue evidence is optional; retain the strict no-overclaiming evidence gate below.
+        // If venue evidence is incomplete, Google Search grounding can still supply a broader public-web fallback.
       }
+    }
+    let groundingUnavailable = false;
+    try {
+      const grounded = await invokeGroundedRecommendationResearch({
+        request: `Act as a senior research IC delivering a decision-ready local recommendation brief. Request: ${input.intent.researchGoal}\n\nUse Google Search to find a diverse shortlist of at least three distinct, publicly verifiable named options when the evidence supports it. First infer the real decision criteria from the request. For each option, extract only source-supported details for atmosphere or design cue, area or location context when available, food/drink or experience focus, best use case, and caveats. Do not repeat the same venue, do not substitute generic categories for named options, and do not invent venue details. If fewer than three distinct named options are verifiable, return an empty options list.\n\nReturn ONLY valid JSON with this exact shape: {"criteria":["criterion"],"options":[{"rank":1,"name":"option name","summary":"one sentence","strengths":["source-supported strength"],"caveats":["source-supported caveat or qualified uncertainty"],"evidence":[{"claim":"specific source-supported fact","sourceUrls":["exact grounded citation URL"]}]}],"selectionAdvice":"how to choose among the options"}. Include at least two criteria, three options, one strength, and one source-linked evidence item for each option. In sourceUrls, use only the exact URLs provided by Google Search grounding.`,
+      });
+      const recommendation = grounded.sources.length >= 3 ? parseGroundedRecommendationBrief(grounded.output, grounded.sources) : null;
+      if (recommendation) return { output: renderStructuredRecommendationMarkdown(recommendation, grounded.sources), groundedSources: grounded.sources, recommendation, sourceAttribution: "Gemini Google Search grounding" };
+    } catch {
+      groundingUnavailable = true;
     }
     return {
       output: `## Recommendation evidence gap\n\n${groundingUnavailable ? "Grounded public-web search is temporarily unavailable, and a local venue-evidence fallback could not verify a diverse shortlist right now. " : "The grounded search response did not contain enough attributable, diverse evidence. "}The available public evidence retains ${sources.length} distinct source${sources.length === 1 ? "" : "s"}, which is not enough to responsibly rank a multi-option shortlist. ResearchOS will not turn a thin source set into a broad recommendation. Use **Broaden scope** to retry this brief when public-search capacity is available.\n\n${buildEvidenceDigest(input.intent, sources)}`,

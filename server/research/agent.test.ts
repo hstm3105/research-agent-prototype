@@ -325,7 +325,7 @@ describe("runResearchSession adaptive-plan contract", () => {
 
   it("uses Google Maps Places evidence when Google Search grounding is unavailable for a local shortlist", async () => {
     vi.clearAllMocks();
-    mocks.llm.invokeGrounded.mockReset().mockRejectedValueOnce(new Error("Gemini invoke failed: 429 Too Many Requests"));
+    mocks.llm.invokeGrounded.mockReset();
     mocks.llm.listLLMModels.mockReset().mockResolvedValue({ data: [{ id: "gpt-5" }] });
     const placeSources = ["one", "two", "three"].map(name => ({
       title: `Cafe ${name}`,
@@ -352,6 +352,7 @@ describe("runResearchSession adaptive-plan contract", () => {
     expect(brief.recommendation?.options).toHaveLength(3);
     expect(brief.groundedSources).toHaveLength(3);
     expect(mocks.places.searchLocalRecommendationPlaces).toHaveBeenCalledWith(intent.researchGoal);
+    expect(mocks.llm.invokeGrounded).not.toHaveBeenCalled();
   });
 
   it("persists each validated recommendation option with resolved source citations", async () => {

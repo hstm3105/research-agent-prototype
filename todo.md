@@ -109,3 +109,4 @@
 - [ ] Add deterministic rate-governor regression coverage and validate one live research flow after the current quota window recovers.
 - [x] Assess source-attributed public-search alternatives for recommendation research when Gemini Google Search grounding is quota-limited.
 - [x] Implement and validate a quota-resilient Google Maps Places evidence fallback that preserves linked sources for local structured recommendation shortlists.
+- [x] Prefer Google Maps Places evidence before Gemini Search grounding for eligible local venue recommendations, avoiding an unnecessary grounded-request quota dependency.
