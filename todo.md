@@ -107,3 +107,5 @@
 - [x] Add a shared server-side Gemini request governor with a conservative per-model RPM budget below the observed 15 RPM limit.
 - [x] Pace model fallback, retries, and concurrent research streams so they cannot create burst traffic that exceeds Gemini RPM limits.
 - [ ] Add deterministic rate-governor regression coverage and validate one live research flow after the current quota window recovers.
+- [x] Assess source-attributed public-search alternatives for recommendation research when Gemini Google Search grounding is quota-limited.
+- [x] Implement and validate a quota-resilient Google Maps Places evidence fallback that preserves linked sources for local structured recommendation shortlists.

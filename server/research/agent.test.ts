@@ -19,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   },
   llm: { invokeLLM: vi.fn(), invokeGrounded: vi.fn(), listLLMModels: vi.fn() },
   search: { searchPublicWeb: vi.fn() },
+  places: { searchLocalRecommendationPlaces: vi.fn() },
 }));
 
 vi.mock("../db", () => mocks.db);
@@ -34,8 +35,9 @@ vi.mock("./llmProvider", () => ({
   },
 }));
 vi.mock("./search", async importOriginal => ({ ...(await importOriginal<typeof import("./search")>()), ...mocks.search }));
+vi.mock("./places", () => mocks.places);
 
-import { applyPlanAdaptation, isAiServiceLimitError, isRecommendationResearch, makePlanSteps, runResearchSession, shouldRequestClarification, synthesizeResearchBrief, synthesizeResearchOutput, toPublicResearchError } from "./agent";
+import { applyPlanAdaptation, isAiServiceLimitError, isRecommendationResearch, makePlanSteps, runResearchSession, shouldRequestClarification, synthesizeLocalPlaceRecommendation, synthesizeResearchBrief, synthesizeResearchOutput, toPublicResearchError } from "./agent";
 import { normalizeSearchPayload } from "./search";
 
 describe("normalizeSearchPayload", () => {
@@ -319,6 +321,37 @@ describe("runResearchSession adaptive-plan contract", () => {
     expect(brief.recommendation?.options).toHaveLength(3);
     expect(brief.groundedSources).toHaveLength(3);
     expect(mocks.llm.invokeGrounded).toHaveBeenCalledWith(expect.objectContaining({ request: expect.stringContaining("Return ONLY valid JSON") }));
+  });
+
+  it("uses Google Maps Places evidence when Google Search grounding is unavailable for a local shortlist", async () => {
+    vi.clearAllMocks();
+    mocks.llm.invokeGrounded.mockReset().mockRejectedValueOnce(new Error("Gemini invoke failed: 429 Too Many Requests"));
+    mocks.llm.listLLMModels.mockReset().mockResolvedValue({ data: [{ id: "gpt-5" }] });
+    const placeSources = ["one", "two", "three"].map(name => ({
+      title: `Cafe ${name}`,
+      url: `https://www.google.com/maps/search/?api=1&query_place_id=${name}`,
+      publisher: "Google Maps",
+      excerpt: `Jaipur. Listed Google Maps rating: 4.5 from 100 Google Maps ratings.`,
+    }));
+    mocks.places.searchLocalRecommendationPlaces.mockReset().mockResolvedValue(placeSources);
+    mocks.llm.invokeLLM.mockReset().mockResolvedValue({ choices: [{ message: { content: JSON.stringify({ criteria: ["location", "Google Maps rating"], options: placeSources.map((source, index) => ({
+      rank: index + 1,
+      name: source.title,
+      summary: `A named Jaipur venue retained from Google Maps Places evidence.`,
+      strengths: ["Listed Google Maps rating: 4.5 from 100 Google Maps ratings."],
+      caveats: ["Confirm current hours and venue experience directly before visiting."],
+      evidence: [{ claim: `Google Maps retains this named Jaipur venue with a listed rating.`, sourceUrls: [source.url] }],
+    })), selectionAdvice: "Choose by preferred location and verify current venue details before visiting." }) } }] });
+    const intent = { title: "Cute cafes", intent: "Recommend aesthetic cafes", researchGoal: "Find a shortlist of cute and aesthetic cafes in Jaipur.", requiresClarification: false, clarifyingQuestion: "", outputFormat: "comparison" as const, plan: [] };
+
+    const directRecommendation = await synthesizeLocalPlaceRecommendation(intent, placeSources);
+    const brief = await synthesizeResearchBrief({ intent, findings: [], sources: [] });
+
+    expect(directRecommendation?.options).toHaveLength(3);
+    expect(brief.output).toContain("Google Maps Places evidence");
+    expect(brief.recommendation?.options).toHaveLength(3);
+    expect(brief.groundedSources).toHaveLength(3);
+    expect(mocks.places.searchLocalRecommendationPlaces).toHaveBeenCalledWith(intent.researchGoal);
   });
 
   it("persists each validated recommendation option with resolved source citations", async () => {
