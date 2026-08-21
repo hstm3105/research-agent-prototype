@@ -1,13 +1,21 @@
 import { describe, expect, it } from "vitest";
 
-describe("Tavily credential", () => {
+const runLive = process.env.RUN_TAVILY_CREDENTIAL_TEST === "1";
+
+describe.skipIf(!runLive)("Tavily credential", () => {
   it("authenticates a minimal server-side search request", async () => {
     const apiKey = process.env.TAVILY_API_KEY;
     expect(apiKey).toBeTruthy();
 
     const response = await fetch("https://api.tavily.com/search", {
       method: "POST",
-      headers: { "content-type": "application/json", authorization: `Bearer ${apiKey}` },
+      headers: {
+        "content-type": "application/json",
+        authorization: `Bearer ${apiKey}`,
+        "X-Client-Source": "researchos",
+        "X-Client-Name": "researchos",
+        "X-Session-Id": "researchos-server",
+      },
       body: JSON.stringify({ query: "Tavily API", search_depth: "fast", max_results: 1 }),
     });
     expect(response.status).toBe(200);

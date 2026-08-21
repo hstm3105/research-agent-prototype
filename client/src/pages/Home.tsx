@@ -129,6 +129,11 @@ function SourceBackedFallback({ sources }: { sources: LiveSource[] }) {
   return <section className="mt-7 rounded-[1.35rem] border border-primary/20 bg-primary/[0.035] p-5 sm:p-6" aria-label="Source-backed research output"><div className="flex gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-primary/10 text-primary"><Quote className="h-4 w-4" /></span><div><p className="font-mono-ui text-[10px] font-medium uppercase tracking-[0.16em] text-primary">Source-backed brief</p><h2 className="mt-1 font-editorial text-3xl font-semibold tracking-[-0.025em]">Evidence collected for review</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-secondary-foreground">The research run retained attributable public sources, but no individual claim met the citation threshold for an AI synthesis. These directly linked excerpts remain available as the completed evidence brief.</p></div></div><div className="mt-5 divide-y divide-border/70 rounded-xl border border-border bg-card/70">{visibleSources.map((source, index) => <article key={source.id} className="px-4 py-4"><div className="flex items-start gap-3"><span className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary/10 font-mono-ui text-[10px] font-medium text-primary">{index + 1}</span><div className="min-w-0"><a href={source.url} target="_blank" rel="noreferrer" className="text-sm font-semibold leading-5 text-primary hover:underline">{source.title}</a><p className="mt-1 text-xs text-muted-foreground">{source.publisher || "Public source"}</p><p className="mt-2 text-sm leading-6 text-secondary-foreground">{source.excerpt || "A directly linked public source retained for this research brief."}</p></div></div></article>)}</div></section>;
 }
 
+function GoogleWorkspaceExportControls({ connected, connecting, exporting, exports, onConnect, onExport }: { connected: boolean; connecting: boolean; exporting: boolean; exports: Array<{ id: string; destination: "google_doc" | "google_sheet" | "google_slides"; fileUrl: string }>; onConnect: () => void; onExport: (destination: "google_doc" | "google_sheet" | "google_slides") => void }) {
+  const labels = { google_doc: "Google Doc", google_sheet: "Google Sheet", google_slides: "Google Slides" } as const;
+  return <section className="mt-5 rounded-2xl border border-primary/20 bg-primary/[0.035] p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="font-mono-ui text-[9px] font-medium uppercase tracking-[0.14em] text-primary">Decision deliverables</p><p className="mt-1 text-xs leading-5 text-secondary-foreground">Create an editable brief, evidence matrix, or leadership narrative from this source-traceable research artifact.</p></div>{!connected && <Button size="sm" onClick={onConnect} disabled={connecting} className="h-8 rounded-lg text-xs">{connecting ? <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" /> : <ArrowRight className="mr-1.5 h-3.5 w-3.5" />}Connect Google</Button>}</div>{connected && <div className="mt-4 grid grid-cols-1 gap-2 sm:grid-cols-3"><Button disabled={exporting} onClick={() => onExport("google_doc")} variant="outline" className="h-9 justify-start rounded-lg text-xs">Decision brief</Button><Button disabled={exporting} onClick={() => onExport("google_sheet")} variant="outline" className="h-9 justify-start rounded-lg text-xs">Evidence matrix</Button><Button disabled={exporting} onClick={() => onExport("google_slides")} variant="outline" className="h-9 justify-start rounded-lg text-xs">Decision deck</Button></div>}{exports.length > 0 && <div className="mt-4 border-t border-primary/10 pt-3"><p className="mb-2 font-mono-ui text-[9px] uppercase tracking-[0.12em] text-muted-foreground">Editable exports</p><div className="flex flex-wrap gap-2">{exports.map(item => <a key={item.id} href={item.fileUrl} target="_blank" rel="noreferrer" className="inline-flex items-center rounded-lg border border-border bg-background px-2.5 py-1.5 text-[11px] text-primary hover:bg-primary/5">{labels[item.destination]} <ArrowRight className="ml-1.5 h-3 w-3" /></a>)}</div></div>}</section>;
+}
+
 /**
  * All content in this page are only for example, replace with your own feature implementation
  * When building pages, remember your instructions in Frontend Workflow, Frontend Best Practices, Design Guide and Common Pitfalls
@@ -139,6 +144,9 @@ export default function Home() {
   const createResearch = trpc.research.create.useMutation();
   const clarifyResearch = trpc.research.clarify.useMutation();
   const createExport = trpc.research.export.useMutation();
+  const googleExportStatus = trpc.research.googleExportStatus.useQuery();
+  const googleAuthorize = trpc.research.googleAuthorize.useMutation();
+  const googleExport = trpc.research.googleExport.useMutation();
   const broadenResearch = trpc.research.broaden.useMutation();
   const createShareLink = trpc.research.createShareLink.useMutation();
   const revokeShareLink = trpc.research.revokeShareLink.useMutation();
@@ -157,6 +165,7 @@ export default function Home() {
   const streamRef = useRef<EventSource | null>(null);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const detailQuery = trpc.research.get.useQuery({ sessionId: selectedSessionId ?? "pending" }, { enabled: Boolean(selectedSessionId), refetchOnWindowFocus: false });
+  const googleExportsQuery = trpc.research.googleExports.useQuery({ sessionId: selectedSessionId ?? "pending" }, { enabled: Boolean(selectedSessionId), refetchOnWindowFocus: false });
 
   useEffect(() => {
     if (selectedSessionId || !sessionsQuery.data) return;
@@ -319,6 +328,28 @@ export default function Home() {
     }
   }
 
+  async function connectGoogleWorkspace() {
+    try {
+      const result = await googleAuthorize.mutateAsync();
+      window.location.assign(result.authorizationUrl);
+    } catch (error) {
+      toast.error("Could not start Google connection", { description: error instanceof Error ? error.message : "Please retry." });
+    }
+  }
+
+  async function exportToGoogleWorkspace(destination: "google_doc" | "google_sheet" | "google_slides") {
+    if (!selectedSessionId) return;
+    if (!googleExportStatus.data?.connected) return connectGoogleWorkspace();
+    try {
+      const result = await googleExport.mutateAsync({ sessionId: selectedSessionId, destination });
+      await googleExportsQuery.refetch();
+      window.open(result.fileUrl, "_blank", "noopener,noreferrer");
+      toast.success("Editable export created", { description: "The source-traceable deliverable is now in your Google Drive." });
+    } catch (error) {
+      toast.error("Could not create Google export", { description: error instanceof Error ? error.message : "Please retry." });
+    }
+  }
+
   async function broadenScope() {
     if (!selectedSessionId) return;
     try {
@@ -405,6 +436,8 @@ export default function Home() {
                   <p className="mt-4 max-w-3xl text-sm leading-6 text-secondary-foreground">{displayGoal}</p>
                 </div>
 
+                {session?.status === "complete" && <GoogleWorkspaceExportControls connected={Boolean(googleExportStatus.data?.connected)} connecting={googleAuthorize.isPending} exporting={googleExport.isPending} exports={(googleExportsQuery.data ?? []) as Array<{ id: string; destination: "google_doc" | "google_sheet" | "google_slides"; fileUrl: string }>} onConnect={() => void connectGoogleWorkspace()} onExport={destination => void exportToGoogleWorkspace(destination)} />}
+
                 {detailQuery.isLoading && <div className="mt-5 flex items-center gap-3 rounded-xl border border-border bg-card px-4 py-3 text-sm text-muted-foreground"><Loader2 className="h-4 w-4 animate-spin text-primary" /> Loading this saved research session…</div>}
                 {detailQuery.error && <div className="mt-5 flex items-start justify-between gap-4 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900"><div className="flex gap-2"><CircleAlert className="mt-0.5 h-4 w-4 shrink-0" /><span>We could not reach this saved research session. Your work is still safe; please retry the connection.</span></div><Button size="sm" variant="outline" onClick={() => void detailQuery.refetch()} className="shrink-0 border-rose-200 bg-white text-rose-800"><ArrowRight className="mr-1 h-3.5 w-3.5" /> Retry</Button></div>}
 
@@ -416,6 +449,7 @@ export default function Home() {
                   {plan.length > 0 && <div className="mt-8"><div className="mb-3 flex items-center gap-2"><Layers3 className="h-4 w-4 text-primary" /><h2 className="font-mono-ui text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Research plan</h2></div><div className="grid gap-2">{plan.map((step, index) => { const isActive = activeStepId === step.id || step.status === "active"; const isDone = step.status === "complete"; const isSkipped = step.status === "skipped"; return <div key={step.id} className={cn("flex items-start gap-3 rounded-xl border px-4 py-3 transition-colors", isActive ? "border-primary/30 bg-primary/[0.045]" : isSkipped ? "border-amber-200 bg-amber-50/35" : "border-border bg-card/60")}><span className={cn("mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px]", isDone ? "border-emerald-500 bg-emerald-500 text-white" : isSkipped ? "border-amber-400 bg-amber-100 text-amber-800" : isActive ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground")}>{isDone ? <Check className="h-3 w-3" /> : isSkipped ? <Clock3 className="h-3 w-3" /> : isActive ? <Loader2 className="h-3 w-3 animate-spin" /> : index + 1}</span><div className="min-w-0"><p className="text-sm font-medium">{step.title}</p><p className="mt-0.5 text-xs leading-5 text-muted-foreground">{step.description}</p></div>{isActive && <span className="ml-auto font-mono-ui text-[9px] uppercase tracking-[0.12em] text-primary">Working</span>}{isSkipped && <span className="ml-auto font-mono-ui text-[9px] uppercase tracking-[0.12em] text-amber-700">Skipped</span>}</div> })}</div></div>}
                   {needsBroaderEvidence && <section className="mt-8 rounded-[1.35rem] border border-amber-200 bg-amber-50/70 p-5 text-amber-950"><div className="flex gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-800"><ScanSearch className="h-4 w-4" /></span><div><p className="font-mono-ui text-[10px] font-medium uppercase tracking-[0.15em] text-amber-700">Evidence coverage is limited</p><h2 className="mt-2 font-editorial text-2xl font-semibold leading-tight">Explore the gaps without losing this brief.</h2><p className="mt-2 max-w-2xl text-sm leading-6 text-amber-900/85">This run retained {allSources.length} source{allSources.length === 1 ? "" : "s"} and {allFindings.length} cited finding{allFindings.length === 1 ? "" : "s"}. A broader follow-up keeps the decision context while deliberately seeking complementary evidence.</p><Button disabled={broadenResearch.isPending} onClick={() => void broadenScope()} className="mt-4 rounded-xl bg-amber-700 text-white hover:bg-amber-800"><ScanSearch className="mr-2 h-3.5 w-3.5" /> {broadenResearch.isPending ? "Starting broader pass…" : "Broaden scope"}</Button></div></div></section>}
                   {session?.status === "complete" && session.finalOutput && <div className="mt-10">{recommendationOptions.length > 0 && <RecommendationShortlist options={recommendationOptions} sourceMap={sourceMap} />}<div className={cn(recommendationOptions.length > 0 && "mt-10")}><div className="mb-5 flex items-center justify-between"><div><p className="font-mono-ui text-[10px] font-medium uppercase tracking-[0.16em] text-primary">Evidence synthesis</p><h2 className="mt-1 font-editorial text-3xl font-semibold tracking-[-0.025em]">What the evidence suggests</h2></div>{allFindings.length > 0 && <span className="hidden rounded-full bg-muted px-3 py-1 font-mono-ui text-[10px] uppercase tracking-[0.1em] text-muted-foreground sm:inline">{allFindings.length} findings</span>}</div><div className="rounded-2xl border border-border bg-card px-5 py-4 text-sm leading-6 text-secondary-foreground"><Streamdown>{session.finalOutput}</Streamdown></div>{allFindings.length > 0 ? <div className="mt-7"><FindingsView outputFormat={outputFormat} findings={allFindings} sourceMap={sourceMap} /></div> : <SourceBackedFallback sources={allSources} />}</div></div>}
+                  {session?.status === "complete" && <GoogleWorkspaceExportControls connected={Boolean(googleExportStatus.data?.connected)} connecting={googleAuthorize.isPending} exporting={googleExport.isPending} exports={(googleExportsQuery.data ?? []) as Array<{ id: string; destination: "google_doc" | "google_sheet" | "google_slides"; fileUrl: string }>} onConnect={() => void connectGoogleWorkspace()} onExport={destination => void exportToGoogleWorkspace(destination)} />}
                   {session?.status === "complete" && <CompletedBriefControls sources={allSources} shareLinks={shareLinks} newShareUrl={newShareUrl} sharing={createShareLink.isPending} revoking={revokeShareLink.isPending} onShare={shareBrief} onRevoke={revokeShare} />}
                   {!plan.length && !isWorking && !session?.errorMessage && <div className="mt-16 rounded-2xl border border-dashed border-border bg-card/40 p-8 text-center"><FileText className="mx-auto h-5 w-5 text-primary" /><p className="mt-3 text-sm font-medium">This session is ready to begin.</p><p className="mt-1 text-xs text-muted-foreground">Open the research stream to generate the adaptive plan.</p><Button variant="outline" onClick={() => openStream(selectedSessionId)} className="mt-5 rounded-xl"><Play className="mr-2 h-3.5 w-3.5" /> Run research</Button></div>}
                   {isAiServiceLimit ? <LimitRecoveryCard phase={lifecyclePhase} progress={lifecycleProgress} message={lifecycleMessage} onRetry={() => openStream(selectedSessionId)} onNewResearch={startNewResearch} /> : session?.errorMessage && <div className="mt-8 rounded-2xl border border-rose-200 bg-rose-50 p-5 text-rose-900"><div className="flex gap-3"><CircleAlert className="mt-0.5 h-4 w-4" /><div><p className="text-sm font-semibold">Research paused</p><p className="mt-1 text-sm leading-6">{session.errorMessage}</p><Button variant="outline" onClick={() => openStream(selectedSessionId)} className="mt-4 border-rose-200 bg-white text-rose-800 hover:bg-rose-100"><ArrowRight className="mr-2 h-3.5 w-3.5" /> Try again</Button></div></div></div>}

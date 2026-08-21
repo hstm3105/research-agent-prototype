@@ -57,6 +57,41 @@ export type RecommendationBrief = {
   selectionAdvice: string;
 };
 
+export type DecisionArtifactSource = {
+  id: string;
+  title: string;
+  url: string;
+  publisher: string | null;
+  excerpt: string | null;
+  qualityScore?: number | null;
+  citationCount?: number | null;
+};
+
+export type DecisionArtifactFinding = {
+  id: string;
+  title: string;
+  claim: string;
+  evidence: string;
+  sourceIds: string[];
+  sourceUrls: string[];
+};
+
+export type DecisionArtifact = {
+  version: 1;
+  title: string;
+  researchGoal: string;
+  outputFormat: OutputFormat;
+  finalSynthesis: string;
+  decisionCriteria: string[];
+  recommendedOptions: RecommendationOption[];
+  selectionAdvice: string | null;
+  findings: DecisionArtifactFinding[];
+  sources: DecisionArtifactSource[];
+  evidenceGaps: string[];
+  nextActions: string[];
+  generatedAt: string;
+};
+
 export type ResearchProgressEvent =
   | { type: "connected"; sessionId: string }
   | { type: "activity"; sessionId: string; phase: "planning" | "discovery" | "analysis" | "synthesis"; message: string; progress: number }

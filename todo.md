@@ -115,3 +115,14 @@
 - [x] Validate a non-local Tavily-plus-Gemini research brief and a local Maps-plus-Gemini venue shortlist end to end with attributable evidence.
 - [x] Configure server-only Tavily credentials and validate the provider connection before enabling general-web retrieval.
 - [x] Update workspace evidence-source messaging to accurately distinguish Tavily general-web retrieval, Google Maps Places local evidence, and the retained video fallback.
+- [x] Publish the implemented Google Workspace decision-deliverable controls and make them visible and discoverable for every completed research brief, including source-only completed sessions.
+- [x] Diagnose the Tavily HTTP 403 response using non-sensitive provider diagnostics and correct the missing official client-attribution headers in the request configuration.
+- [x] Apply Tavily’s official `agent-setup` guidance to the ResearchOS general-web retrieval integration and revalidate its connection.
+- [ ] Define decision-oriented research artifact contracts for executive briefs, evidence matrices, option comparisons, and slide narratives.
+- [ ] Assess and configure an editable Google Docs, Sheets, and Slides export integration with per-source traceability.
+- [ ] Implement export templates and user flows that convert completed research into the most appropriate editable deliverable.
+- [ ] Validate that exported documents, spreadsheets, and presentations preserve research structure, evidence links, caveats, and citations.
+- [x] Define a canonical decision artifact that captures framing, criteria, options, claims, confidence, caveats, next actions, and source traceability.
+- [ ] Enable Google Workspace access and implement user-facing Google Docs and Sheets export actions for completed research sessions.
+- [x] Build Docs and Sheets templates from the canonical decision artifact, including traceable source links and a decision-ready recommendation section.
+- [x] Design the Slides-ready narrative template and preserve an auditable source appendix for leadership review.

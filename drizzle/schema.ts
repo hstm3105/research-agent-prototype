@@ -130,6 +130,29 @@ export const researchExports = mysqlTable("researchExports", {
   createdAt: timestamp("createdAt").defaultNow().notNull(),
 }, table => [index("researchExports_session_idx").on(table.sessionId)]);
 
+export const googleWorkspaceConnections = mysqlTable("googleWorkspaceConnections", {
+  userId: int("userId").primaryKey().references(() => users.id, { onDelete: "cascade" }),
+  refreshTokenCiphertext: text("refreshTokenCiphertext").notNull(),
+  accessTokenCiphertext: text("accessTokenCiphertext"),
+  accessTokenExpiresAt: timestamp("accessTokenExpiresAt"),
+  scope: text("scope"),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+  updatedAt: timestamp("updatedAt").defaultNow().onUpdateNow().notNull(),
+});
+
+export const googleWorkspaceExports = mysqlTable("googleWorkspaceExports", {
+  id: varchar("id", { length: 48 }).primaryKey(),
+  sessionId: varchar("sessionId", { length: 48 }).notNull().references(() => researchSessions.id, { onDelete: "cascade" }),
+  userId: int("userId").notNull().references(() => users.id, { onDelete: "cascade" }),
+  destination: mysqlEnum("destination", ["google_doc", "google_sheet", "google_slides"]).notNull(),
+  fileId: varchar("fileId", { length: 255 }).notNull(),
+  fileUrl: text("fileUrl").notNull(),
+  createdAt: timestamp("createdAt").defaultNow().notNull(),
+}, table => [
+  index("googleWorkspaceExports_session_idx").on(table.sessionId, table.createdAt),
+  index("googleWorkspaceExports_user_idx").on(table.userId, table.createdAt),
+]);
+
 export const researchShareLinks = mysqlTable("researchShareLinks", {
   id: varchar("id", { length: 48 }).primaryKey(),
   sessionId: varchar("sessionId", { length: 48 }).notNull().references(() => researchSessions.id, { onDelete: "cascade" }),
@@ -151,4 +174,6 @@ export type ResearchFinding = typeof researchFindings.$inferSelect;
 export type ResearchCitation = typeof researchCitations.$inferSelect;
 export type ResearchRecommendationOption = typeof researchRecommendationOptions.$inferSelect;
 export type ResearchExport = typeof researchExports.$inferSelect;
+export type GoogleWorkspaceConnection = typeof googleWorkspaceConnections.$inferSelect;
+export type GoogleWorkspaceExport = typeof googleWorkspaceExports.$inferSelect;
 export type ResearchShareLink = typeof researchShareLinks.$inferSelect;

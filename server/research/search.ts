@@ -98,7 +98,13 @@ export async function searchTavilyWeb(query: string): Promise<NormalizedSearchSo
   if (!ENV.tavilyApiKey) throw new Error("Tavily search is not configured");
   const response = await fetch("https://api.tavily.com/search", {
     method: "POST",
-    headers: { "content-type": "application/json", authorization: `Bearer ${ENV.tavilyApiKey}` },
+    headers: {
+      "content-type": "application/json",
+      authorization: `Bearer ${ENV.tavilyApiKey}`,
+      "X-Client-Source": "researchos",
+      "X-Client-Name": "researchos",
+      "X-Session-Id": "researchos-server",
+    },
     body: JSON.stringify({
       query,
       topic: "general",

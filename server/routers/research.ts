@@ -8,6 +8,7 @@ import {
   getResearchSessionForUser,
   listResearchCitations,
   listResearchExports,
+  listGoogleWorkspaceExports,
   listResearchFindings,
   listResearchRecommendationOptions,
   listResearchShareLinksForUser,
@@ -19,6 +20,8 @@ import {
 } from "../db";
 import { protectedProcedure, publicProcedure, router } from "../_core/trpc";
 import { generateResearchExport } from "../research/export";
+import { googleAuthorizationUrl, googleCallbackUrl, generateGoogleWorkspaceExport, isGoogleWorkspaceConnected } from "../integrations/googleWorkspace";
+import { GOOGLE_STATE_COOKIE } from "../integrations/googleOAuth";
 
 const querySchema = z.object({ query: z.string().trim().min(8).max(8_000), researchDepth: z.enum(["quick", "standard", "deep"]).default("standard") });
 const sessionSchema = z.object({ sessionId: z.string().min(6).max(64) });
@@ -64,6 +67,17 @@ export const researchRouter = router({
   export: protectedProcedure.input(z.object({ sessionId: z.string().min(6).max(64), format: z.enum(["markdown", "html"]) })).mutation(({ ctx, input }) =>
     generateResearchExport({ sessionId: input.sessionId, userId: ctx.user.id, format: input.format })
   ),
+  googleExportStatus: protectedProcedure.query(async ({ ctx }) => ({ connected: await isGoogleWorkspaceConnected(ctx.user.id) })),
+  googleAuthorize: protectedProcedure.mutation(({ ctx }) => {
+    const callbackUrl = googleCallbackUrl(ctx.req);
+    const authorizationUrl = googleAuthorizationUrl({ userId: ctx.user.id, callbackUrl });
+    ctx.res.cookie(GOOGLE_STATE_COOKIE, new URL(authorizationUrl).searchParams.get("state"), { httpOnly: true, sameSite: "lax", secure: callbackUrl.startsWith("https://"), path: "/", maxAge: 10 * 60_000 });
+    return { authorizationUrl };
+  }),
+  googleExport: protectedProcedure.input(z.object({ sessionId: z.string().min(6).max(64), destination: z.enum(["google_doc", "google_sheet", "google_slides"]) })).mutation(({ ctx, input }) =>
+    generateGoogleWorkspaceExport({ sessionId: input.sessionId, userId: ctx.user.id, destination: input.destination })
+  ),
+  googleExports: protectedProcedure.input(sessionSchema).query(({ ctx, input }) => listGoogleWorkspaceExports(input.sessionId, ctx.user.id)),
   broaden: protectedProcedure.input(sessionSchema).mutation(async ({ ctx, input }) => {
     const session = await getResearchSessionForUser(input.sessionId, ctx.user.id);
     if (!session || session.status !== "complete") return null;

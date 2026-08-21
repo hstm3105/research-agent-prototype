@@ -4,6 +4,8 @@ import {
   InsertUser,
   researchCitations,
   researchExports,
+  googleWorkspaceConnections,
+  googleWorkspaceExports,
   researchFindings,
   researchRecommendationOptions,
   researchShareLinks,
@@ -207,6 +209,33 @@ export async function createResearchExport(input: typeof researchExports.$inferI
 export async function listResearchExports(sessionId: string) {
   const db = await requireDb();
   return db.select().from(researchExports).where(eq(researchExports.sessionId, sessionId)).orderBy(desc(researchExports.createdAt));
+}
+
+export async function getGoogleWorkspaceConnection(userId: number) {
+  const db = await requireDb();
+  const rows = await db.select().from(googleWorkspaceConnections).where(eq(googleWorkspaceConnections.userId, userId)).limit(1);
+  return rows[0] ?? null;
+}
+
+export async function upsertGoogleWorkspaceConnection(input: typeof googleWorkspaceConnections.$inferInsert) {
+  const db = await requireDb();
+  await db.insert(googleWorkspaceConnections).values(input).onDuplicateKeyUpdate({ set: {
+    refreshTokenCiphertext: input.refreshTokenCiphertext,
+    accessTokenCiphertext: input.accessTokenCiphertext,
+    accessTokenExpiresAt: input.accessTokenExpiresAt,
+    scope: input.scope,
+    updatedAt: new Date(),
+  } });
+}
+
+export async function createGoogleWorkspaceExport(input: typeof googleWorkspaceExports.$inferInsert) {
+  const db = await requireDb();
+  await db.insert(googleWorkspaceExports).values(input);
+}
+
+export async function listGoogleWorkspaceExports(sessionId: string, userId: number) {
+  const db = await requireDb();
+  return db.select().from(googleWorkspaceExports).where(and(eq(googleWorkspaceExports.sessionId, sessionId), eq(googleWorkspaceExports.userId, userId))).orderBy(desc(googleWorkspaceExports.createdAt));
 }
 
 export async function createResearchShareLink(input: typeof researchShareLinks.$inferInsert) {

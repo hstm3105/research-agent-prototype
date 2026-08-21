@@ -34,6 +34,10 @@ vi.mock("@/lib/trpc", () => ({
       create: { useMutation: () => ({ isPending: false, mutateAsync: vi.fn() }) },
       clarify: { useMutation: () => ({ isPending: false, mutateAsync: mocks.clarify }) },
       export: { useMutation: () => ({ isPending: false, mutateAsync: vi.fn() }) },
+      googleExportStatus: { useQuery: () => ({ data: { connected: false }, isLoading: false }) },
+      googleAuthorize: { useMutation: () => ({ isPending: false, mutateAsync: vi.fn() }) },
+      googleExport: { useMutation: () => ({ isPending: false, mutateAsync: vi.fn() }) },
+      googleExports: { useQuery: () => ({ data: [], isLoading: false, refetch: vi.fn() }) },
       broaden: { useMutation: () => ({ isPending: false, mutateAsync: mocks.broaden }) },
       createShareLink: { useMutation: () => ({ isPending: false, mutateAsync: mocks.createShare }) },
       revokeShareLink: { useMutation: () => ({ isPending: false, mutateAsync: mocks.revokeShare }) },
@@ -172,6 +176,8 @@ describe("Home active-session clarification flow", () => {
 
     await user.click(screen.getByRole("button", { name: /open active session/i }));
     expect(await screen.findByText(/Evidence coverage is limited/i)).toBeTruthy();
+    expect(screen.getAllByText(/Decision deliverables/i).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: /Connect Google/i }).length).toBeGreaterThan(0);
     expect(screen.getByText("High signal")).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: /share read-only brief/i }));
