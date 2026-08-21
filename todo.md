@@ -100,13 +100,17 @@
 - [x] Audit the “Cute and Aesthetic Cafes in Jaipur” session to identify why source retrieval yielded only one non-comparable recommendation.
 - [x] Detect recommendation and shortlist intents, explicitly derive decision criteria, target a minimum diverse option set, and flag insufficient evidence rather than overclaiming.
 - [x] Extract structured, per-option facts from retained sources and synthesize a ranked comparison with source-linked evidence, trade-offs, and an actionable recommendation.
-- [ ] Validate a live repaired café shortlist with Gemini Google Search grounding once the configured API project has available search-grounding quota; regression quality gates are complete.
+- [ ] Validate one successful live Gemini Google Search-grounded Jaipur café shortlist end to end once the project/key has working `/v1beta/interactions` quota; retain the Maps-first local path as the default fallback.
 - [x] Define and validate a typed recommendation contract covering ranked options, decision criteria, source-linked evidence, caveats, and an actionable selection recommendation.
 - [x] Persist extracted per-option recommendation facts and citations, then render a structured comparison shortlist rather than relying exclusively on freeform final Markdown.
-- [ ] Validate the typed grounded multi-option Jaipur café shortlist end to end when Gemini Search-grounding quota is available.
+- [ ] Validate the typed Gemini-grounded multi-option Jaipur café shortlist end to end once the project/key has working `/v1beta/interactions` quota.
 - [x] Add a shared server-side Gemini request governor with a conservative per-model RPM budget below the observed 15 RPM limit.
 - [x] Pace model fallback, retries, and concurrent research streams so they cannot create burst traffic that exceeds Gemini RPM limits.
-- [ ] Add deterministic rate-governor regression coverage and validate one live research flow after the current quota window recovers.
+- [ ] Run one controlled live Gemini Search-grounded request through the rate governor after `/v1beta/interactions` quota truly clears, and record success without burst retries or fallback RPM spillover.
 - [x] Assess source-attributed public-search alternatives for recommendation research when Gemini Google Search grounding is quota-limited.
 - [x] Implement and validate a quota-resilient Google Maps Places evidence fallback that preserves linked sources for local structured recommendation shortlists.
 - [x] Prefer Google Maps Places evidence before Gemini Search grounding for eligible local venue recommendations, avoiding an unnecessary grounded-request quota dependency.
+- [x] Assess and select Tavily as a deployable, source-attributed general public-web retrieval provider that does not depend on Gemini Search grounding.
+- [x] Implement normalized Tavily general-web retrieval with bounded video-source fallback, evidence routing, and source-quality signals; retain Google Maps Places only for local venues.
+- [x] Validate a non-local Tavily-plus-Gemini research brief and a local Maps-plus-Gemini venue shortlist end to end with attributable evidence.
+- [x] Configure server-only Tavily credentials and validate the provider connection before enabling general-web retrieval.

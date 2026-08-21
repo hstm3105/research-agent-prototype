@@ -1,4 +1,5 @@
 import { callDataApi } from "../_core/dataApi";
+import { ENV } from "../_core/env";
 import type { NormalizedSearchSource } from "./types";
 
 type RecordValue = Record<string, unknown>;
@@ -76,7 +77,63 @@ export function normalizeSearchPayload(payload: unknown): NormalizedSearchSource
   return sources.slice(0, 8);
 }
 
+type TavilySearchResponse = {
+  results?: Array<{
+    title?: string;
+    url?: string;
+    content?: string;
+    raw_content?: string;
+  }>;
+};
+
+function publisherFromUrl(url: string) {
+  try {
+    return new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "Public web";
+  }
+}
+
+export async function searchTavilyWeb(query: string): Promise<NormalizedSearchSource[]> {
+  if (!ENV.tavilyApiKey) throw new Error("Tavily search is not configured");
+  const response = await fetch("https://api.tavily.com/search", {
+    method: "POST",
+    headers: { "content-type": "application/json", authorization: `Bearer ${ENV.tavilyApiKey}` },
+    body: JSON.stringify({
+      query,
+      topic: "general",
+      search_depth: "basic",
+      max_results: 8,
+      include_answer: false,
+      include_raw_content: false,
+    }),
+  });
+  if (!response.ok) throw new Error(`Tavily search failed with HTTP ${response.status}`);
+  const payload = await response.json() as TavilySearchResponse;
+  const seen = new Set<string>();
+  const retrievedAt = new Date();
+  return (payload.results ?? []).flatMap(result => {
+    const url = asUrl(result.url);
+    if (!url || seen.has(url)) return [];
+    seen.add(url);
+    const excerpt = textOf(result.content) ?? textOf(result.raw_content);
+    return [{
+      title: textOf(result.title) ?? publisherFromUrl(url),
+      url,
+      publisher: publisherFromUrl(url),
+      excerpt,
+      retrievedAt,
+    }];
+  }).slice(0, 8);
+}
+
 export async function searchPublicWeb(query: string): Promise<NormalizedSearchSource[]> {
+  try {
+    const tavilySources = await searchTavilyWeb(query);
+    if (tavilySources.length) return tavilySources;
+  } catch {
+    // Retain the pre-existing public video adapter only as a bounded backup when the general-web provider is unavailable.
+  }
   const payload = await callDataApi("Youtube/search", { query: { q: query } });
   return normalizeSearchPayload(payload);
 }
