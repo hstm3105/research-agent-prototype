@@ -118,11 +118,12 @@
 - [x] Publish the implemented Google Workspace decision-deliverable controls and make them visible and discoverable for every completed research brief, including source-only completed sessions.
 - [x] Diagnose the Tavily HTTP 403 response using non-sensitive provider diagnostics and correct the missing official client-attribution headers in the request configuration.
 - [x] Apply Tavily’s official `agent-setup` guidance to the ResearchOS general-web retrieval integration and revalidate its connection.
-- [ ] Define decision-oriented research artifact contracts for executive briefs, evidence matrices, option comparisons, and slide narratives.
-- [ ] Assess and configure an editable Google Docs, Sheets, and Slides export integration with per-source traceability.
-- [ ] Implement export templates and user flows that convert completed research into the most appropriate editable deliverable.
-- [ ] Validate that exported documents, spreadsheets, and presentations preserve research structure, evidence links, caveats, and citations.
+- [x] Define decision-oriented research artifact contracts for executive briefs, evidence matrices, option comparisons, and slide narratives.
+- [x] Assess and configure an editable Google Docs, Sheets, and Slides export integration with per-source traceability.
+- [x] Implement export templates and user flows that convert completed research into the most appropriate editable deliverable.
+- [x] Validate that exported documents, spreadsheets, and presentations preserve research structure, evidence links, caveats, and citations.
 - [x] Define a canonical decision artifact that captures framing, criteria, options, claims, confidence, caveats, next actions, and source traceability.
-- [ ] Enable Google Workspace access and implement user-facing Google Docs and Sheets export actions for completed research sessions.
+- [x] Enable Google Workspace access and implement user-facing Google Docs and Sheets export actions for completed research sessions.
 - [x] Build Docs and Sheets templates from the canonical decision artifact, including traceable source links and a decision-ready recommendation section.
 - [x] Design the Slides-ready narrative template and preserve an auditable source appendix for leadership review.
+- [ ] Improve Google Workspace export formatting — better document structure, typography, section headers, and evidence layout for Docs, Sheets, and Slides deliverables.
