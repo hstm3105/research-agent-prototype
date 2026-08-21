@@ -13,11 +13,13 @@ const mocks = vi.hoisted(() => ({
   revokeShare: vi.fn().mockResolvedValue({ id: "active-share", revoked: true }),
   completedMode: false,
   emptyFindingMode: false,
+  listError: false,
+  listRefetch: vi.fn().mockResolvedValue(undefined),
   limitMode: false,
 }));
 
 vi.mock("@/components/DashboardLayout", () => ({
-  default: ({ children, onSelectSession, onNewResearch }: { children: React.ReactNode; onSelectSession?: (id: string) => void; onNewResearch?: () => void }) => <div><button onClick={() => onSelectSession?.("session-live")}>Open active session</button><button onClick={onNewResearch}>New research navigation</button>{children}</div>,
+  default: ({ children, onSelectSession, onNewResearch, sessions = [], sessionsError, onRetrySessions }: { children: React.ReactNode; onSelectSession?: (id: string) => void; onNewResearch?: () => void; sessions?: Array<{ title: string }>; sessionsError?: boolean; onRetrySessions?: () => void }) => <div><button onClick={() => onSelectSession?.("session-live")}>Open active session</button><button onClick={onNewResearch}>New research navigation</button>{sessionsError && <div>History could not be loaded.<button onClick={onRetrySessions}>Retry</button></div>}{sessions.map(session => <span key={session.title}>{session.title}</span>)}{children}</div>,
 }));
 vi.mock("@/components/ui/button", () => ({ Button: ({ children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) => <button {...props}>{children}</button> }));
 vi.mock("@/components/ui/textarea", () => ({ Textarea: (props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) => <textarea {...props} /> }));
@@ -27,7 +29,7 @@ vi.mock("@/lib/trpc", () => ({
   trpc: {
     useUtils: () => ({ research: { get: { invalidate: mocks.invalidateGet }, list: { invalidate: mocks.invalidateList } } }),
     research: {
-      list: { useQuery: () => ({ data: [{ id: "session-live", title: "Active brief", status: mocks.completedMode ? "complete" : mocks.limitMode ? "failed" : "draft", researchDepth: "standard", updatedAt: new Date() }], isLoading: false, error: null, refetch: vi.fn() }) },
+      list: { useQuery: () => ({ data: mocks.listError ? undefined : [{ id: "session-live", title: "Active brief", status: mocks.completedMode ? "complete" : mocks.limitMode ? "failed" : "draft", researchDepth: "standard", updatedAt: new Date() }], isLoading: false, error: mocks.listError ? new Error("Failed to fetch") : null, refetch: mocks.listRefetch }) },
       get: { useQuery: () => ({ data: { session: { id: "session-live", title: "Active brief", query: "Research a topic", researchGoal: "Research a topic", outputFormat: "report", status: mocks.completedMode ? "complete" : mocks.limitMode ? "failed" : "draft", finalOutput: mocks.completedMode ? "# Active brief\n\nA completed source-backed research summary." : null, errorMessage: mocks.limitMode ? "AI_SERVICE_LIMIT" : null, lifecyclePhase: mocks.limitMode ? "planning" : null, lifecycleProgress: mocks.limitMode ? 18 : null, lifecycleMessage: mocks.limitMode ? "Research safely paused during planning. Collected work remains available to resume." : null }, steps: mocks.completedMode ? [{ id: "step-1", ordinal: 0, title: "Sparse source check", description: "Check evidence", searchQuery: "research topic", status: "skipped" }] : [], sources: mocks.completedMode ? [{ id: "source-1", title: "Institutional evidence", url: "https://example.gov/evidence", publisher: "Evidence Office", excerpt: "A substantive source excerpt used by the research brief.", qualityScore: 82, qualitySignalsJson: JSON.stringify(["Primary or institutional domain", "Cited by 1 finding"]), citationCount: 1, retrievedAt: new Date() }] : [], findings: mocks.completedMode && !mocks.emptyFindingMode ? [{ id: "finding-1", ordinal: 0, title: "Cited finding", claim: "Evidence points to a clear conclusion.", evidence: "Supporting evidence.", citationSourceIdsJson: JSON.stringify(["source-1"]) }] : [], exports: [], shareLinks: mocks.completedMode ? [{ id: "active-share", createdAt: new Date(), revokedAt: null }] : [] }, isLoading: false, error: null, refetch: vi.fn() }) },
       create: { useMutation: () => ({ isPending: false, mutateAsync: vi.fn() }) },
       clarify: { useMutation: () => ({ isPending: false, mutateAsync: mocks.clarify }) },
@@ -60,6 +62,7 @@ describe("Home active-session clarification flow", () => {
     vi.clearAllMocks();
     mocks.completedMode = false;
     mocks.emptyFindingMode = false;
+    mocks.listError = false;
     mocks.limitMode = false;
     FakeEventSource.instances = [];
     vi.stubGlobal("EventSource", FakeEventSource);
@@ -118,6 +121,20 @@ describe("Home active-session clarification flow", () => {
 
     expect(window.location.search).toBe("");
     expect(await screen.findByPlaceholderText(/What do you need to understand/i)).toBeTruthy();
+  });
+
+  it("shows a retryable history state when the initial workspace transport request fails", async () => {
+    mocks.listError = true;
+    const user = userEvent.setup();
+    const { rerender } = render(<Home />);
+
+    expect(await screen.findByText("History could not be loaded.")).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: /retry/i }));
+    expect(mocks.listRefetch).toHaveBeenCalledTimes(1);
+
+    mocks.listError = false;
+    rerender(<Home />);
+    expect(await screen.findByText("Active brief")).toBeTruthy();
   });
 
   it("offers a preserved-work recovery flow for an AI service limit", async () => {

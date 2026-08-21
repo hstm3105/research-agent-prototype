@@ -91,3 +91,9 @@
 - [x] Diagnose the completed four-day-workweek session that collected sources but persisted neither substantive synthesis nor visible final output.
 - [x] Generate a genuine, source-grounded executive synthesis for every completed brief and persist it independently of individual finding attribution outcomes.
 - [x] Make the completed workspace lead with the answer and evidence-backed conclusions, then repair and verify the affected live session end to end.
+- [x] Capture the reported tRPC query failure across browser console, network, and server logs and identify the exact failing request path.
+- [x] Repair the API connectivity or query configuration causing failed browser fetches and provide a resilient visible workspace fallback.
+- [x] Add regression coverage and verify the ResearchOS workspace loads and refetches successfully after the repair.
+- [x] Resolve the stale provider-attempt runtime import mismatch and confirm a clean server/browser reload with no module-export errors.
+- [x] Add rendered coverage for an initial session-history transport failure with a visible retry that recovers the workspace.
+- [x] Re-verify independent workspace API requests after the runtime cleanup and confirm logs contain no new failed-fetch errors.
