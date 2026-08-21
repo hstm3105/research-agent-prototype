@@ -96,7 +96,7 @@ export async function listResearchSessionsForUser(userId: number) {
 export async function updateResearchSessionForUser(
   id: string,
   userId: number,
-  update: Partial<Pick<typeof researchSessions.$inferInsert, "title" | "query" | "researchGoal" | "intent" | "outputFormat" | "status" | "clarifyingQuestion" | "planJson" | "finalOutput" | "errorMessage" | "completedAt">>
+  update: Partial<Pick<typeof researchSessions.$inferInsert, "title" | "query" | "researchGoal" | "intent" | "outputFormat" | "status" | "clarifyingQuestion" | "planJson" | "finalOutput" | "errorMessage" | "lifecyclePhase" | "lifecycleProgress" | "lifecycleMessage" | "completedAt">>
 ) {
   const db = await requireDb();
   await db.update(researchSessions).set({ ...update, updatedAt: new Date() }).where(and(eq(researchSessions.id, id), eq(researchSessions.userId, userId)));

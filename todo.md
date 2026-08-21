@@ -51,3 +51,13 @@
 - [x] Add rendered interaction coverage for history search, depth labels, and the lifecycle health panel, then validate the responsive workspace.
 - [x] Add a rendered sidebar test for history filtering, empty-search feedback, and visible depth badges.
 - [x] Verify the enhanced sidebar at a mobile viewport before saving the completed update checkpoint.
+- [x] Detect AI-service limit failures and convert provider-specific errors into a clear, non-technical recoverable session state.
+- [x] Normalize existing failed sessions with stored AI-limit provider errors into the recoverable limit state.
+- [x] Preserve the user’s query, plan, sources, findings, and current lifecycle state when an AI-service limit interrupts a run.
+- [x] Add an accessible limit-recovery panel with safe retry, start-new-research, and preserved-work actions.
+- [x] Add regression coverage for limit-error detection and the rendered retry/recovery flow, then validate the responsive interface.
+- [x] Persist and restore the paused lifecycle phase, progress, and last activity message for AI-limit recovery sessions.
+- [x] Visually verify the AI-limit recovery panel at desktop and mobile breakpoints before delivery.
+- [x] Support explicit session IDs in the workspace URL so a saved research session can be intentionally opened and shared without changing the fresh-start default.
+- [x] Persist the actual last emitted lifecycle phase, progress, and activity message before an AI-limit interruption, then verify those exact values are restored.
+- [x] Clear the explicit session URL parameter on New Research and cover the shared-session-to-fresh-composer transition.

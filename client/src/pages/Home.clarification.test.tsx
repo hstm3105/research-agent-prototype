@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   invalidateGet: vi.fn().mockResolvedValue(undefined),
   invalidateList: vi.fn().mockResolvedValue(undefined),
   clarify: vi.fn().mockResolvedValue(undefined),
+  limitMode: false,
 }));
 
 vi.mock("@/components/DashboardLayout", () => ({
@@ -21,8 +22,8 @@ vi.mock("@/lib/trpc", () => ({
   trpc: {
     useUtils: () => ({ research: { get: { invalidate: mocks.invalidateGet }, list: { invalidate: mocks.invalidateList } } }),
     research: {
-      list: { useQuery: () => ({ data: [{ id: "session-live", title: "Active brief", status: "draft", updatedAt: new Date() }], isLoading: false, error: null, refetch: vi.fn() }) },
-      get: { useQuery: () => ({ data: { session: { id: "session-live", title: "Active brief", query: "Research a topic", researchGoal: "Research a topic", outputFormat: "report", status: "draft", errorMessage: null }, steps: [], sources: [], findings: [], exports: [] }, isLoading: false, error: null, refetch: vi.fn() }) },
+      list: { useQuery: () => ({ data: [{ id: "session-live", title: "Active brief", status: mocks.limitMode ? "failed" : "draft", researchDepth: "standard", updatedAt: new Date() }], isLoading: false, error: null, refetch: vi.fn() }) },
+      get: { useQuery: () => ({ data: { session: { id: "session-live", title: "Active brief", query: "Research a topic", researchGoal: "Research a topic", outputFormat: "report", status: mocks.limitMode ? "failed" : "draft", errorMessage: mocks.limitMode ? "AI_SERVICE_LIMIT" : null, lifecyclePhase: mocks.limitMode ? "planning" : null, lifecycleProgress: mocks.limitMode ? 18 : null, lifecycleMessage: mocks.limitMode ? "Research safely paused during planning. Collected work remains available to resume." : null }, steps: [], sources: [], findings: [], exports: [] }, isLoading: false, error: null, refetch: vi.fn() }) },
       create: { useMutation: () => ({ isPending: false, mutateAsync: vi.fn() }) },
       clarify: { useMutation: () => ({ isPending: false, mutateAsync: mocks.clarify }) },
       export: { useMutation: () => ({ isPending: false, mutateAsync: vi.fn() }) },
@@ -49,8 +50,10 @@ describe("Home active-session clarification flow", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.limitMode = false;
     FakeEventSource.instances = [];
     vi.stubGlobal("EventSource", FakeEventSource);
+    window.history.replaceState({}, "", "/");
   });
 
   it("renders a streamed clarification immediately and resumes the active stream after submission", async () => {
@@ -92,5 +95,35 @@ describe("Home active-session clarification flow", () => {
 
     expect(await screen.findByPlaceholderText(/What do you need to understand/i)).toBeTruthy();
     expect(screen.getByLabelText("Research depth")).toBeTruthy();
+  });
+
+  it("clears an explicit session URL when New Research is chosen", async () => {
+    window.history.replaceState({}, "", "/?session=session-live");
+    const user = userEvent.setup();
+    render(<Home />);
+
+    expect(await screen.findByRole("button", { name: /run research/i })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: /new research navigation/i }));
+
+    expect(window.location.search).toBe("");
+    expect(await screen.findByPlaceholderText(/What do you need to understand/i)).toBeTruthy();
+  });
+
+  it("offers a preserved-work recovery flow for an AI service limit", async () => {
+    mocks.limitMode = true;
+    const user = userEvent.setup();
+    render(<Home />);
+
+    await user.click(screen.getByRole("button", { name: /open active session/i }));
+    expect(await screen.findByText("Research safely paused")).toBeTruthy();
+    expect(screen.getByText(/question, research plan, collected sources, and cited findings are saved/i)).toBeTruthy();
+    const recoveryPanel = screen.getByLabelText("AI service recovery");
+    expect(within(recoveryPanel).getByLabelText("Paused recovery phase").textContent).toBe("planning");
+    expect(within(recoveryPanel).getByLabelText("Paused recovery progress").textContent).toBe("18%");
+    expect(within(recoveryPanel).getByText(/Collected work remains available to resume/i)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: /resume research/i }));
+    expect(FakeEventSource.instances).toHaveLength(1);
+    await user.click(screen.getByRole("button", { name: /start new research/i }));
+    expect(await screen.findByPlaceholderText(/What do you need to understand/i)).toBeTruthy();
   });
 });

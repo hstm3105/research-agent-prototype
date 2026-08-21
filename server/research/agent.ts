@@ -209,6 +209,18 @@ function buildFinalOutput(intent: ResearchIntent, findingCount: number): string 
   return `# ${intent.title}\n\n## ${formatLabels[intent.outputFormat]}\n\n**Research objective:** ${intent.researchGoal}\n\nThe attributed findings below were developed from live public-web sources. Each finding includes its own source links; use the references panel to inspect the original material.\n\n**Evidence collected:** ${findingCount} attributable findings across the completed research plan.`;
 }
 
+export function isAiServiceLimitError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  return /\b412\b|usage exhausted|rate limit|quota|resource exhausted/i.test(message);
+}
+
+export function toPublicResearchError(error: unknown) {
+  if (isAiServiceLimitError(error)) {
+    return "The AI service is temporarily unavailable. Your research workspace has been preserved and can be resumed.";
+  }
+  return error instanceof Error ? error.message : "Research execution failed";
+}
+
 function emit(emitEvent: (event: ResearchProgressEvent) => void, event: ResearchProgressEvent) {
   emitEvent(event);
 }
@@ -224,6 +236,13 @@ export async function runResearchSession(input: {
     emit(input.emit, { type: "complete", sessionId: input.sessionId });
     return;
   }
+
+  const lastActivity = { current: null as { phase: "planning" | "discovery" | "analysis" | "synthesis"; progress: number; message: string } | null };
+  const emitToClient = input.emit;
+  input.emit = event => {
+    if (event.type === "activity") lastActivity.current = { phase: event.phase, progress: event.progress, message: event.message };
+    emitToClient(event);
+  };
 
   try {
     const storedPlan = session.status === "failed" ? readStoredPlan(session.planJson) : null;
@@ -404,8 +423,23 @@ export async function runResearchSession(input: {
     emit(input.emit, { type: "activity", sessionId: session.id, phase: "synthesis", message: "Research complete. Your cited brief is ready.", progress: 100 });
     emit(input.emit, { type: "complete", sessionId: session.id });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Research execution failed";
-    await updateResearchSessionForUser(session.id, input.userId, { status: "failed", errorMessage: message });
+    const isAiLimit = isAiServiceLimitError(error);
+    const message = toPublicResearchError(error);
+    const savedSteps = await listResearchSteps(session.id);
+    const activeStep = savedSteps.find(step => step.status === "active");
+    const settledSteps = savedSteps.filter(step => step.status === "complete" || step.status === "skipped").length;
+    const lifecyclePhase = lastActivity.current?.phase ?? (session.status === "planning" ? "planning" : activeStep ? "analysis" : "researching");
+    const lifecycleProgress = lastActivity.current?.progress ?? (session.status === "planning" ? 18 : Math.min(90, 25 + Math.round((settledSteps / Math.max(savedSteps.length, 1)) * 65)));
+    const lifecycleMessage = lastActivity.current?.message ?? (isAiLimit
+      ? `Research safely paused during ${activeStep?.title || lifecyclePhase}. Collected work remains available to resume.`
+      : message);
+    await updateResearchSessionForUser(session.id, input.userId, {
+      status: "failed",
+      errorMessage: isAiLimit ? "AI_SERVICE_LIMIT" : message,
+      lifecyclePhase,
+      lifecycleProgress,
+      lifecycleMessage,
+    });
     emit(input.emit, { type: "error", sessionId: input.sessionId, message });
   }
 }

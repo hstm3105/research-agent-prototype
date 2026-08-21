@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
     addResearchSources: vi.fn(),
     addResearchStep: vi.fn(),
     getResearchSessionForUser: vi.fn(),
+    listResearchSteps: vi.fn(),
     replaceResearchSteps: vi.fn(),
     updateResearchSessionForUser: vi.fn(),
     updateResearchStep: vi.fn(),
@@ -20,7 +21,7 @@ vi.mock("../db", () => mocks.db);
 vi.mock("../_core/llm", () => mocks.llm);
 vi.mock("./search", async importOriginal => ({ ...(await importOriginal<typeof import("./search")>()), ...mocks.search }));
 
-import { applyPlanAdaptation, makePlanSteps, runResearchSession, shouldRequestClarification } from "./agent";
+import { applyPlanAdaptation, isAiServiceLimitError, makePlanSteps, runResearchSession, shouldRequestClarification, toPublicResearchError } from "./agent";
 import { normalizeSearchPayload } from "./search";
 
 describe("normalizeSearchPayload", () => {
@@ -62,6 +63,15 @@ describe("normalizeSearchPayload", () => {
       excerpt: "A source excerpt.",
       retrievedAt: expect.any(Date),
     })]);
+  });
+});
+
+describe("AI service limit recovery", () => {
+  it("recognizes limit responses and replaces raw provider details", () => {
+    const providerError = new Error('LLM invoke failed: 412 Precondition Failed — {"code":9,"message":"account usage exhausted"}');
+
+    expect(isAiServiceLimitError(providerError)).toBe(true);
+    expect(toPublicResearchError(providerError)).toBe("The AI service is temporarily unavailable. Your research workspace has been preserved and can be resumed.");
   });
 });
 
@@ -147,6 +157,7 @@ describe("runResearchSession adaptive-plan contract", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.db.getResearchSessionForUser.mockResolvedValue({ id: "session-1", query: "How should a team assess this change?", status: "draft" });
+    mocks.db.listResearchSteps.mockResolvedValue([]);
     mocks.llm.listLLMModels.mockResolvedValue({ data: [{ id: "gpt-5" }] });
     mocks.search.searchPublicWeb.mockResolvedValue([source]);
     mocks.llm.invokeLLM
@@ -223,5 +234,27 @@ describe("runResearchSession adaptive-plan contract", () => {
       expect.objectContaining({ type: "complete" }),
     ]));
     expect(mocks.db.updateResearchSessionForUser).toHaveBeenCalledWith("session-2", 1, expect.objectContaining({ status: "complete" }));
+  });
+
+  it("persists the actual last emitted activity when an AI limit interrupts planning", async () => {
+    vi.clearAllMocks();
+    mocks.db.getResearchSessionForUser.mockResolvedValue({ id: "session-limit", query: "Research a topic", status: "draft" });
+    mocks.db.listResearchSteps.mockResolvedValue([]);
+    mocks.llm.listLLMModels.mockReset().mockResolvedValue({ data: [{ id: "gpt-5" }] });
+    mocks.llm.invokeLLM.mockReset().mockRejectedValueOnce(new Error("LLM invoke failed: 412 usage exhausted"));
+
+    await runResearchSession({ sessionId: "session-limit", userId: 1, emit: vi.fn() });
+
+    expect(mocks.db.updateResearchSessionForUser).toHaveBeenLastCalledWith(
+      "session-limit",
+      1,
+      expect.objectContaining({
+        status: "failed",
+        errorMessage: "AI_SERVICE_LIMIT",
+        lifecyclePhase: "planning",
+        lifecycleProgress: 8,
+        lifecycleMessage: "Interpreting the research objective and choosing the right evidence format.",
+      })
+    );
   });
 });

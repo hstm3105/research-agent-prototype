@@ -20,6 +20,7 @@ import {
   PanelRightOpen,
   Play,
   Quote,
+  RotateCcw,
   Search,
   Send,
   Sparkles,
@@ -110,6 +111,14 @@ export default function Home() {
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const detailQuery = trpc.research.get.useQuery({ sessionId: selectedSessionId ?? "pending" }, { enabled: Boolean(selectedSessionId), refetchOnWindowFocus: false });
 
+  useEffect(() => {
+    if (selectedSessionId || !sessionsQuery.data) return;
+    const requestedSessionId = new URLSearchParams(window.location.search).get("session");
+    if (requestedSessionId && sessionsQuery.data.some(session => session.id === requestedSessionId)) {
+      setSelectedSessionId(requestedSessionId);
+    }
+  }, [selectedSessionId, sessionsQuery.data]);
+
   useEffect(() => () => streamRef.current?.close(), []);
 
   useEffect(() => {
@@ -155,6 +164,18 @@ export default function Home() {
     setStreamMessage(null);
   }
 
+  function startNewResearch() {
+    streamRef.current?.close();
+    resetLiveState();
+    setSelectedSessionId(null);
+    setQuery("");
+    setResearchDepth("standard");
+    const url = new URL(window.location.href);
+    url.searchParams.delete("session");
+    window.history.replaceState({}, "", `${url.pathname}${url.search}${url.hash}`);
+    window.setTimeout(() => composerRef.current?.focus(), 0);
+  }
+
   function recordActivity(activity: Omit<ResearchActivity, "timestamp">) {
     setActivityLog(current => appendResearchActivity(current, activity));
   }
@@ -196,7 +217,7 @@ export default function Home() {
       }
       if (data.type === "error") {
         setStreamMessage(data.message);
-        toast.error("Research execution stopped", { description: data.message });
+        toast.error(data.message.includes("AI service") ? "AI service temporarily unavailable" : "Research execution stopped", { description: data.message });
         stream.close();
         void utils.research.get.invalidate({ sessionId });
         void utils.research.list.invalidate();
@@ -256,12 +277,14 @@ export default function Home() {
   const displayGoal = session?.researchGoal || liveIntent?.researchGoal || session?.query;
   const completedPlanSteps = plan.filter(step => step.status === "complete" || step.status === "skipped").length;
   const latestActivity = activityLog.at(-1);
-  const lifecyclePhase = isAwaitingClarification ? "clarification" : latestActivity?.phase ?? displayStatus ?? "planning";
-  const lifecycleProgress = latestActivity?.progress ?? (session?.status === "complete" ? 100 : 0);
+  const lifecyclePhase = isAwaitingClarification ? "clarification" : latestActivity?.phase ?? session?.lifecyclePhase ?? displayStatus ?? "planning";
+  const lifecycleProgress = latestActivity?.progress ?? session?.lifecycleProgress ?? (session?.status === "complete" ? 100 : 0);
+  const lifecycleMessage = latestActivity?.message ?? session?.lifecycleMessage ?? null;
   const lifecycleRecovery = plan.some(step => step.status === "skipped") ? "Continuing with gaps" : session?.errorMessage ? "Attention needed" : "Healthy";
+  const isAiServiceLimit = session?.errorMessage === "AI_SERVICE_LIMIT" || streamMessage === "The AI service is temporarily unavailable. Your research workspace has been preserved and can be resumed.";
 
   return (
-    <DashboardLayout sessions={sidebarSessions} selectedSessionId={selectedSessionId} isSessionsLoading={sessionsQuery.isLoading} sessionsError={Boolean(sessionsQuery.error)} onRetrySessions={() => void sessionsQuery.refetch()} onNewResearch={() => { streamRef.current?.close(); resetLiveState(); setSelectedSessionId(null); setQuery(""); setResearchDepth("standard"); window.setTimeout(() => composerRef.current?.focus(), 0); }} onSelectSession={id => { streamRef.current?.close(); resetLiveState(); setSelectedSessionId(id); }} onSettings={() => toast("Research controls", { description: "Current prototype uses a cited public-source layer and stores completed work per signed-in user." })}>
+    <DashboardLayout sessions={sidebarSessions} selectedSessionId={selectedSessionId} isSessionsLoading={sessionsQuery.isLoading} sessionsError={Boolean(sessionsQuery.error)} onRetrySessions={() => void sessionsQuery.refetch()} onNewResearch={startNewResearch} onSelectSession={id => { streamRef.current?.close(); resetLiveState(); setSelectedSessionId(id); }} onSettings={() => toast("Research controls", { description: "Current prototype uses a cited public-source layer and stores completed work per signed-in user." })}>
       <div className="min-h-screen">
         <header className="flex min-h-16 items-center justify-between border-b border-border/80 px-5 sm:px-8 lg:px-10">
           <div className="flex items-center gap-3"><span className="font-mono-ui text-[10px] font-medium uppercase tracking-[0.18em] text-primary">Research workspace</span><span className="hidden h-1 w-1 rounded-full bg-muted-foreground/60 sm:inline" /><span className="hidden text-xs text-muted-foreground sm:inline">Plan · discover · synthesize</span></div>
@@ -303,7 +326,7 @@ export default function Home() {
                   {plan.length > 0 && <div className="mt-8"><div className="mb-3 flex items-center gap-2"><Layers3 className="h-4 w-4 text-primary" /><h2 className="font-mono-ui text-[10px] font-medium uppercase tracking-[0.16em] text-muted-foreground">Research plan</h2></div><div className="grid gap-2">{plan.map((step, index) => { const isActive = activeStepId === step.id || step.status === "active"; const isDone = step.status === "complete"; const isSkipped = step.status === "skipped"; return <div key={step.id} className={cn("flex items-start gap-3 rounded-xl border px-4 py-3 transition-colors", isActive ? "border-primary/30 bg-primary/[0.045]" : isSkipped ? "border-amber-200 bg-amber-50/35" : "border-border bg-card/60")}><span className={cn("mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full border text-[10px]", isDone ? "border-emerald-500 bg-emerald-500 text-white" : isSkipped ? "border-amber-400 bg-amber-100 text-amber-800" : isActive ? "border-primary bg-primary text-primary-foreground" : "border-border text-muted-foreground")}>{isDone ? <Check className="h-3 w-3" /> : isSkipped ? <Clock3 className="h-3 w-3" /> : isActive ? <Loader2 className="h-3 w-3 animate-spin" /> : index + 1}</span><div className="min-w-0"><p className="text-sm font-medium">{step.title}</p><p className="mt-0.5 text-xs leading-5 text-muted-foreground">{step.description}</p></div>{isActive && <span className="ml-auto font-mono-ui text-[9px] uppercase tracking-[0.12em] text-primary">Working</span>}{isSkipped && <span className="ml-auto font-mono-ui text-[9px] uppercase tracking-[0.12em] text-amber-700">Skipped</span>}</div> })}</div></div>}
                   {allFindings.length > 0 && <div className="mt-10"><div className="mb-5 flex items-center justify-between"><div><p className="font-mono-ui text-[10px] font-medium uppercase tracking-[0.16em] text-primary">Evidence synthesis</p><h2 className="mt-1 font-editorial text-3xl font-semibold tracking-[-0.025em]">What the evidence suggests</h2></div><span className="hidden rounded-full bg-muted px-3 py-1 font-mono-ui text-[10px] uppercase tracking-[0.1em] text-muted-foreground sm:inline">{allFindings.length} findings</span></div>{session?.finalOutput && <div className="mb-7 rounded-2xl border border-border bg-card px-5 py-4 text-sm leading-6 text-secondary-foreground"><Streamdown>{session.finalOutput}</Streamdown></div>}<FindingsView outputFormat={outputFormat} findings={allFindings} sourceMap={sourceMap} /></div>}
                   {!plan.length && !isWorking && !session?.errorMessage && <div className="mt-16 rounded-2xl border border-dashed border-border bg-card/40 p-8 text-center"><FileText className="mx-auto h-5 w-5 text-primary" /><p className="mt-3 text-sm font-medium">This session is ready to begin.</p><p className="mt-1 text-xs text-muted-foreground">Open the research stream to generate the adaptive plan.</p><Button variant="outline" onClick={() => openStream(selectedSessionId)} className="mt-5 rounded-xl"><Play className="mr-2 h-3.5 w-3.5" /> Run research</Button></div>}
-                  {session?.errorMessage && <div className="mt-8 rounded-2xl border border-rose-200 bg-rose-50 p-5 text-rose-900"><div className="flex gap-3"><CircleAlert className="mt-0.5 h-4 w-4" /><div><p className="text-sm font-semibold">Research paused</p><p className="mt-1 text-sm leading-6">{session.errorMessage}</p><Button variant="outline" onClick={() => openStream(selectedSessionId)} className="mt-4 border-rose-200 bg-white text-rose-800 hover:bg-rose-100"><ArrowRight className="mr-2 h-3.5 w-3.5" /> Try again</Button></div></div></div>}
+                  {isAiServiceLimit ? <LimitRecoveryCard phase={lifecyclePhase} progress={lifecycleProgress} message={lifecycleMessage} onRetry={() => openStream(selectedSessionId)} onNewResearch={startNewResearch} /> : session?.errorMessage && <div className="mt-8 rounded-2xl border border-rose-200 bg-rose-50 p-5 text-rose-900"><div className="flex gap-3"><CircleAlert className="mt-0.5 h-4 w-4" /><div><p className="text-sm font-semibold">Research paused</p><p className="mt-1 text-sm leading-6">{session.errorMessage}</p><Button variant="outline" onClick={() => openStream(selectedSessionId)} className="mt-4 border-rose-200 bg-white text-rose-800 hover:bg-rose-100"><ArrowRight className="mr-2 h-3.5 w-3.5" /> Try again</Button></div></div></div>}
                 </>}
               </div>
 
@@ -321,4 +344,8 @@ function ClarificationCard({ question, onSubmit, loading }: { question: string; 
   const clarificationRef = useRef<HTMLTextAreaElement | null>(null);
   useEffect(() => { clarificationRef.current?.focus(); }, []);
   return <div className="mt-8 rounded-[1.35rem] border border-amber-200 bg-amber-50/70 p-6"><div className="flex items-start gap-3"><Sparkles className="mt-0.5 h-5 w-5 text-amber-700" /><div><p className="font-mono-ui text-[10px] font-medium uppercase tracking-[0.15em] text-amber-700">One decision before we proceed</p><h2 className="mt-2 font-editorial text-2xl font-semibold leading-tight text-amber-950">{question}</h2></div></div><div className="mt-5 flex flex-col gap-3 sm:flex-row"><Textarea ref={clarificationRef} value={answer} onChange={event => setAnswer(event.target.value)} placeholder="Add the constraint, audience, time horizon, or decision context that matters most." className="min-h-20 resize-none border-amber-200 bg-white/80 text-sm" /><Button disabled={loading || answer.trim().length < 2} onClick={() => void onSubmit(answer)} className="h-10 shrink-0 rounded-xl self-end bg-amber-700 text-white hover:bg-amber-800"><ChevronRight className="mr-1 h-4 w-4" /> Continue</Button></div></div>;
+}
+
+function LimitRecoveryCard({ phase, progress, message, onRetry, onNewResearch }: { phase: string; progress: number; message: string | null; onRetry: () => void; onNewResearch: () => void }) {
+  return <div aria-label="AI service recovery" className="mt-8 rounded-[1.35rem] border border-amber-200 bg-amber-50/70 p-6 text-amber-950"><div className="flex gap-3"><span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-amber-100 text-amber-800"><Timer className="h-4 w-4" /></span><div><p className="font-mono-ui text-[10px] font-medium uppercase tracking-[0.15em] text-amber-700">Research safely paused</p><h2 className="mt-2 font-editorial text-2xl font-semibold leading-tight">The AI service is temporarily unavailable.</h2><p className="mt-3 max-w-2xl text-sm leading-6 text-amber-900/85">Your question, research plan, collected sources, and cited findings are saved. You can resume this session when the service is available, or begin a different research brief without losing this work.</p><div className="mt-4 grid max-w-md grid-cols-2 gap-2"><div className="rounded-xl border border-amber-200 bg-white/75 px-3 py-2"><p className="font-mono-ui text-[9px] uppercase tracking-[0.12em] text-amber-700">Paused at</p><p aria-label="Paused recovery phase" className="mt-1 text-xs font-semibold capitalize">{phase.replace(/_/g, " ")}</p></div><div className="rounded-xl border border-amber-200 bg-white/75 px-3 py-2"><p className="font-mono-ui text-[9px] uppercase tracking-[0.12em] text-amber-700">Progress</p><p aria-label="Paused recovery progress" className="mt-1 text-xs font-semibold">{progress}%</p></div></div>{message && <p className="mt-3 text-xs leading-5 text-amber-900/75">{message}</p>}<div className="mt-5 flex flex-wrap gap-2"><Button onClick={onRetry} className="rounded-xl bg-amber-700 text-white hover:bg-amber-800"><RotateCcw className="mr-2 h-3.5 w-3.5" /> Resume research</Button><Button variant="outline" onClick={onNewResearch} className="rounded-xl border-amber-200 bg-white text-amber-900 hover:bg-amber-100">Start new research</Button></div></div></div></div>;
 }

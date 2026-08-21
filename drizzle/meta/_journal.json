@@ -36,6 +36,13 @@
       "when": 1787256593627,
       "tag": "0004_first_power_man",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "5",
+      "when": 1787293672849,
+      "tag": "0005_ambitious_hemingway",
+      "breakpoints": true
     }
   ]
 }
