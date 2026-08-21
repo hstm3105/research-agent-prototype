@@ -6,6 +6,7 @@ import {
   addResearchSources,
   getResearchSessionForUser,
   listResearchFindings,
+  listResearchSources,
   listResearchSteps,
   replaceResearchSteps,
   updateResearchSessionForUser,
@@ -191,6 +192,48 @@ async function proposeAdaptiveChange(input: {
     response_format: { type: "json_schema", json_schema: { name: "research_plan_adaptation", strict: true, schema: adaptationSchema } },
   });
   return parseJson<PlanAdaptation>(response.choices[0]?.message.content);
+}
+
+function buildEvidenceDigest(intent: ResearchIntent, sources: Array<{ title: string; url: string; publisher: string | null; excerpt: string | null }>): string {
+  const sourceLinks = sources.slice(0, 6).map((source, index) => `- **${source.title}** — ${source.excerpt || "Directly linked public evidence retained for this brief."} [Source ${index + 1}](${source.url})`).join("\n");
+  return `## Answer\n\nThe research run retained directly attributable public evidence relevant to the question. A model-written synthesis was unavailable, so the evidence below is presented without extrapolating beyond the source excerpts.\n\n## Evidence collected\n\n${sourceLinks || "No attributable source excerpts were retained."}\n\n## Practical interpretation\n\nUse the linked source material to verify the underlying claims and decide whether the available evidence is sufficient for the requested conclusion.`;
+}
+
+export async function synthesizeResearchOutput(input: {
+  intent: ResearchIntent;
+  findings: Array<{ title: string; claim: string; evidence: string; citationSourceIdsJson: string }>;
+  sources: Array<{ id: string; title: string; url: string; publisher: string | null; excerpt: string | null }>;
+}): Promise<string> {
+  const sourceMap = new Map(input.sources.map(source => [source.id, source]));
+  const findings = input.findings.slice(0, 10).map(finding => ({
+    title: finding.title,
+    claim: finding.claim,
+    evidence: finding.evidence,
+    sources: (() => {
+      try {
+        return JSON.parse(finding.citationSourceIdsJson || "[]").map((id: string) => sourceMap.get(id)).filter(Boolean).map((source: { title: string; url: string }) => ({ title: source.title, url: source.url }));
+      } catch {
+        return [];
+      }
+    })(),
+  }));
+  const sources = Array.from(new Map(input.sources.map(source => [source.url, source])).values()).slice(0, 10).map(source => ({ title: source.title, url: source.url, publisher: source.publisher, excerpt: source.excerpt }));
+  try {
+    const model = await chooseResearchModel();
+    const response = await invokeResearchLLM({
+      model,
+      max_tokens: 900,
+      messages: [
+        { role: "system", content: "You are a senior research lead preparing the final decision-ready answer. Write a substantive Markdown brief that answers the research goal directly—not a process update or a source list. Include an `## Answer` heading, a balanced conclusion, the principal supporting and limiting evidence, and practical implications. Use only the supplied findings and source excerpts; do not invent facts or numbers. Cite each factual conclusion with direct Markdown links to the supplied source URLs. If evidence is weak or indirect, say so clearly." },
+        { role: "user", content: JSON.stringify({ researchGoal: input.intent.researchGoal, requestedFormat: input.intent.outputFormat, findings, sources }) },
+      ],
+    });
+    const output = String(response.choices[0]?.message.content || "").replace(/^```markdown\s*/i, "").replace(/^```\s*/i, "").replace(/\s*```$/, "").trim();
+    if (output.length >= 180) return output;
+  } catch {
+    // The deterministic digest below keeps the completed workspace useful if final synthesis is temporarily unavailable.
+  }
+  return buildEvidenceDigest(input.intent, sources);
 }
 
 function buildFinalOutput(intent: ResearchIntent, findingCount: number): string {
@@ -437,10 +480,12 @@ export async function runResearchSession(input: {
       emit(input.emit, { type: "step", sessionId: session.id, stepId: step.id, status: "complete", title: step.title });
     }
 
-    emit(input.emit, { type: "activity", sessionId: session.id, phase: "synthesis", message: "Synthesizing the final cited research brief.", progress: 92 });
+    emit(input.emit, { type: "activity", sessionId: session.id, phase: "synthesis", message: "Synthesizing a decision-ready answer from the retained evidence.", progress: 92 });
+    const [completedFindings, completedSources] = await Promise.all([listResearchFindings(session.id), listResearchSources(session.id)]);
+    const finalOutput = await synthesizeResearchOutput({ intent, findings: completedFindings, sources: completedSources });
     await updateResearchSessionForUser(session.id, input.userId, {
       status: "complete",
-      finalOutput: buildFinalOutput(intent, findingOrdinal),
+      finalOutput,
       completedAt: new Date(),
     });
     emit(input.emit, { type: "activity", sessionId: session.id, phase: "synthesis", message: "Research complete. Your cited brief is ready.", progress: 100 });

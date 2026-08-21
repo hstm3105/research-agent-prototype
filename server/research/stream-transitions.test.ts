@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
     addResearchStep: vi.fn(),
     getResearchSessionForUser: vi.fn(),
     listResearchFindings: vi.fn(),
+    listResearchSources: vi.fn(),
     listResearchSteps: vi.fn(),
     replaceResearchSteps: vi.fn(),
     updateResearchSessionForUser: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock("../_core/llm", () => mocks.llm);
 vi.mock("./llmProvider", () => ({
   invokeResearchLLM: mocks.llm.invokeLLM,
   chooseResearchModel: async () => "gemini-3.5-flash-lite",
+  providerAttemptsFromError: () => [],
 }));
 vi.mock("./search", () => mocks.search);
 
@@ -33,6 +35,7 @@ describe("research stream transitions", () => {
     vi.clearAllMocks();
     mocks.llm.listLLMModels.mockResolvedValue({ data: [{ id: "gpt-5" }] });
     mocks.db.listResearchFindings.mockResolvedValue([]);
+    mocks.db.listResearchSources.mockResolvedValue([]);
     mocks.db.listResearchSteps.mockResolvedValue([]);
   });
 
@@ -58,7 +61,7 @@ describe("research stream transitions", () => {
     ]));
   });
 
-  it("resumes a saved failed plan without reparsing the query or requiring a reload", async () => {
+  it("resumes a saved failed plan without reparsing the query before generating the final answer", async () => {
     const storedPlan = [{ id: "resume-step", ordinal: 0, title: "Saved evidence step", description: "Continue the saved plan.", searchQuery: "saved evidence" }];
     mocks.db.getResearchSessionForUser.mockResolvedValue({
       id: "resume-1",
@@ -75,7 +78,10 @@ describe("research stream transitions", () => {
 
     await runResearchSession({ sessionId: "resume-1", userId: 1, emit: event => events.push(event) });
 
-    expect(mocks.llm.invokeLLM).not.toHaveBeenCalled();
+    expect(mocks.llm.invokeLLM).toHaveBeenCalledTimes(1);
+    expect(mocks.llm.invokeLLM).toHaveBeenCalledWith(expect.objectContaining({
+      messages: expect.arrayContaining([expect.objectContaining({ content: expect.stringContaining("Complete the saved research objective") })]),
+    }));
     expect(events).toEqual(expect.arrayContaining([
       expect.objectContaining({ type: "activity", message: expect.stringContaining("Resuming") }),
       expect.objectContaining({ type: "plan", plan: storedPlan }),

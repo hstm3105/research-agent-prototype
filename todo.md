@@ -88,3 +88,6 @@
 - [x] Diagnose completed sessions that retain sources but persist zero cited findings and therefore show no result body.
 - [x] Ensure every completed research session renders a useful, clearly labeled source-backed result when structured findings are empty or cannot be attributed.
 - [x] Repair the affected completed session and add server plus rendered-workspace regression coverage for visible completed output.
+- [x] Diagnose the completed four-day-workweek session that collected sources but persisted neither substantive synthesis nor visible final output.
+- [x] Generate a genuine, source-grounded executive synthesis for every completed brief and persist it independently of individual finding attribution outcomes.
+- [x] Make the completed workspace lead with the answer and evidence-backed conclusions, then repair and verify the affected live session end to end.

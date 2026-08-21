@@ -7,6 +7,8 @@ const mocks = vi.hoisted(() => ({
     addResearchSources: vi.fn(),
     addResearchStep: vi.fn(),
     getResearchSessionForUser: vi.fn(),
+    listResearchFindings: vi.fn(),
+    listResearchSources: vi.fn(),
     listResearchSteps: vi.fn(),
     replaceResearchSteps: vi.fn(),
     updateResearchSessionForUser: vi.fn(),
@@ -30,7 +32,7 @@ vi.mock("./llmProvider", () => ({
 }));
 vi.mock("./search", async importOriginal => ({ ...(await importOriginal<typeof import("./search")>()), ...mocks.search }));
 
-import { applyPlanAdaptation, isAiServiceLimitError, makePlanSteps, runResearchSession, shouldRequestClarification, toPublicResearchError } from "./agent";
+import { applyPlanAdaptation, isAiServiceLimitError, makePlanSteps, runResearchSession, shouldRequestClarification, synthesizeResearchOutput, toPublicResearchError } from "./agent";
 import { normalizeSearchPayload } from "./search";
 
 describe("normalizeSearchPayload", () => {
@@ -88,6 +90,22 @@ describe("AI service limit recovery", () => {
 
     expect(isAiServiceLimitError(providerOutage)).toBe(true);
     expect(toPublicResearchError(providerOutage)).toBe("The AI service is temporarily unavailable. Your research workspace has been preserved and can be resumed.");
+  });
+});
+
+describe("final research synthesis", () => {
+  it("returns a substantive Gemini-written answer with direct source links", async () => {
+    mocks.llm.listLLMModels.mockResolvedValue({ data: [{ id: "gpt-5" }] });
+    mocks.llm.invokeLLM.mockReset().mockResolvedValue({ choices: [{ message: { content: "## Answer\n\nA four-day workweek can improve wellbeing in suitable settings, but implementation constraints should be tested first. [Evidence](https://example.org/evidence)" } }] });
+
+    const output = await synthesizeResearchOutput({
+      intent: { title: "Workweek evidence", intent: "Assess policy", researchGoal: "Assess the four-day workweek.", requiresClarification: false, clarifyingQuestion: "", outputFormat: "comparison", plan: [] },
+      findings: [{ title: "Pilot evidence", claim: "Pilot evidence supports wellbeing gains.", evidence: "Reported by the source.", citationSourceIdsJson: JSON.stringify(["source-1"]) }],
+      sources: [{ id: "source-1", title: "Evidence", url: "https://example.org/evidence", publisher: "Research institute", excerpt: "Pilot programs reported wellbeing gains." }],
+    });
+
+    expect(output).toContain("## Answer");
+    expect(output).toContain("https://example.org/evidence");
   });
 });
 
@@ -173,6 +191,8 @@ describe("runResearchSession adaptive-plan contract", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mocks.db.getResearchSessionForUser.mockResolvedValue({ id: "session-1", query: "How should a team assess this change?", status: "draft" });
+    mocks.db.listResearchFindings.mockResolvedValue([]);
+    mocks.db.listResearchSources.mockResolvedValue([]);
     mocks.db.listResearchSteps.mockResolvedValue([]);
     mocks.llm.listLLMModels.mockResolvedValue({ data: [{ id: "gpt-5" }] });
     mocks.search.searchPublicWeb.mockResolvedValue([source]);

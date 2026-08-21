@@ -177,6 +177,7 @@ describe("Home active-session clarification flow", () => {
     await user.click(screen.getByRole("button", { name: /open active session/i }));
 
     expect(await screen.findByText("What the evidence suggests")).toBeTruthy();
+    expect(screen.getByText(/A completed source-backed research summary/i)).toBeTruthy();
     expect(screen.getByLabelText("Source-backed research output")).toBeTruthy();
     expect(screen.getByText("Evidence collected for review")).toBeTruthy();
     expect(screen.getByRole("link", { name: "Institutional evidence" })).toHaveProperty("href", "https://example.gov/evidence");
