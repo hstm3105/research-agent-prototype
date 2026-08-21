@@ -45,3 +45,9 @@
 - [x] Eliminate stale stream-event state captures so live clarification and activity updates always apply to the current workspace state.
 - [x] Define and test explicit saved-session navigation semantics, keeping sidebar selection read-only until the user chooses to run or resume research.
 - [x] Confirm export controls remain available only for completed sessions and document the lifecycle diagnostic findings.
+- [x] Add session-history search and empty-search feedback that works with desktop and mobile navigation.
+- [x] Display each session’s selected research depth in the history list using concise, accessible labels.
+- [x] Add an active-run lifecycle health panel showing current phase, progress, evidence count, plan completion, and recoverable status.
+- [x] Add rendered interaction coverage for history search, depth labels, and the lifecycle health panel, then validate the responsive workspace.
+- [x] Add a rendered sidebar test for history filtering, empty-search feedback, and visible depth badges.
+- [x] Verify the enhanced sidebar at a mobile viewport before saving the completed update checkpoint.

@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -62,6 +62,12 @@ describe("Home active-session clarification flow", () => {
     expect(FakeEventSource.instances).toHaveLength(0);
     await user.click(await screen.findByRole("button", { name: /run research/i }));
     expect(FakeEventSource.instances).toHaveLength(1);
+    await act(async () => {
+      FakeEventSource.instances[0].emit("activity", { type: "activity", phase: "discovering", message: "Checking live public sources.", progress: 32 });
+    });
+    const lifecyclePanel = await screen.findByLabelText("Research lifecycle health");
+    expect(within(lifecyclePanel).getByText(/discovering/i)).toBeTruthy();
+    expect(within(lifecyclePanel).getByText("32%")).toBeTruthy();
     await act(async () => {
       FakeEventSource.instances[0].emit("clarification", { type: "clarification", sessionId: "session-live", question: "Which jurisdiction applies?" });
     });
