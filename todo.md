@@ -131,3 +131,10 @@
 - [x] Format Google Sheets exports with frozen and styled headers, column sizing, wrapped evidence text, alternating evidence rows, and source-link usability.
 - [x] Format Google Slides exports with a consistent title hierarchy, readable body typography, evidence footers, and a legible source appendix layout.
 - [x] Add regression coverage for export-format request construction and validate refreshed Docs, Sheets, and Slides from a completed research brief.
+
+- [x] Audit the public repository state, history, project structure, and tracked-file hygiene.
+- [x] Add a comprehensive public README covering product capabilities, architecture, service routing, setup, testing, and deployment.
+- [x] Add detailed deployment instructions covering environment secrets, database migrations, Google Workspace OAuth, production build, troubleshooting, and security.
+- [x] Verify the public repository contains the latest ResearchOS files and regression coverage, and publish documentation updates.
+- [x] Review project structure for cleanup opportunities and record final code-quality recommendations.
+- [x] Add a repository license file matching the declared MIT package license.
