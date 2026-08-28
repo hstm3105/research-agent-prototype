@@ -96,7 +96,7 @@ The Gemini Google Search-grounding path can remain unavailable when a Google pro
 
 ## Deployment
 
-For the full production checklist, secret reference, Google OAuth setup, database migration workflow, validation commands, operational notes, and troubleshooting matrix, read [`docs/deployment.md`](docs/deployment.md).
+For the full production checklist, secret reference, Google OAuth setup, database migration workflow, validation commands, operational notes, and troubleshooting matrix, read [`docs/deployment.md`](docs/deployment.md). For the release audit and prioritized maintainer cleanup recommendations, read [`docs/repository-audit.md`](docs/repository-audit.md).
 
 The normal production sequence is:
 
@@ -126,6 +126,7 @@ For Google Workspace exports, register the exact callback URL `https://<producti
 | `drizzle/schema.ts` | Relational schema for users, sessions, plans, evidence, exports, shares, rate limits, and Workspace connections. |
 | `scripts/validateGoogleWorkspaceExports.mjs` | Maintainer-only live validator that creates fresh exports for an authorized completed session. |
 | `docs/deployment.md` | Detailed deployment, integration, security, and troubleshooting guide. |
+| `docs/repository-audit.md` | Public-release audit and prioritized cleanup recommendations. |
 
 ## Current release notes
 
