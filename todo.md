@@ -100,13 +100,13 @@
 - [x] Audit the “Cute and Aesthetic Cafes in Jaipur” session to identify why source retrieval yielded only one non-comparable recommendation.
 - [x] Detect recommendation and shortlist intents, explicitly derive decision criteria, target a minimum diverse option set, and flag insufficient evidence rather than overclaiming.
 - [x] Extract structured, per-option facts from retained sources and synthesize a ranked comparison with source-linked evidence, trade-offs, and an actionable recommendation.
-- [ ] Validate one successful live Gemini Google Search-grounded Jaipur café shortlist end to end once the project/key has working `/v1beta/interactions` quota; retain the Maps-first local path as the default fallback. Rechecked on 2026-08-22: the provider still returned HTTP 429.
+- [ ] Validate one successful live Gemini Google Search-grounded Jaipur café shortlist end to end once the project/key has working `/v1beta/interactions` quota; retain the Maps-first local path as the default fallback. Rechecked on 2026-08-28: the provider still returned HTTP 429.
 - [x] Define and validate a typed recommendation contract covering ranked options, decision criteria, source-linked evidence, caveats, and an actionable selection recommendation.
 - [x] Persist extracted per-option recommendation facts and citations, then render a structured comparison shortlist rather than relying exclusively on freeform final Markdown.
-- [ ] Validate the typed Gemini-grounded multi-option Jaipur café shortlist end to end once the project/key has working `/v1beta/interactions` quota. Rechecked on 2026-08-22: the provider still returned HTTP 429.
+- [ ] Validate the typed Gemini-grounded multi-option Jaipur café shortlist end to end once the project/key has working `/v1beta/interactions` quota. Rechecked on 2026-08-28: the provider still returned HTTP 429.
 - [x] Add a shared server-side Gemini request governor with a conservative per-model RPM budget below the observed 15 RPM limit.
 - [x] Pace model fallback, retries, and concurrent research streams so they cannot create burst traffic that exceeds Gemini RPM limits.
-- [ ] Run one controlled live Gemini Search-grounded request through the rate governor after `/v1beta/interactions` quota truly clears, and record success without burst retries or fallback RPM spillover. Rechecked on 2026-08-22: the provider still returned HTTP 429 before a successful governed request could complete.
+- [ ] Run one controlled live Gemini Search-grounded request through the rate governor after `/v1beta/interactions` quota truly clears, and record success without burst retries or fallback RPM spillover. Rechecked on 2026-08-28: the provider still returned HTTP 429 before a successful governed request could complete.
 - [x] Assess source-attributed public-search alternatives for recommendation research when Gemini Google Search grounding is quota-limited.
 - [x] Implement and validate a quota-resilient Google Maps Places evidence fallback that preserves linked sources for local structured recommendation shortlists.
 - [x] Prefer Google Maps Places evidence before Gemini Search grounding for eligible local venue recommendations, avoiding an unnecessary grounded-request quota dependency.
